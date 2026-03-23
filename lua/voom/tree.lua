@@ -9,7 +9,7 @@
 --   - auto-refresh when the body is saved or re-entered after edits
 --
 -- The tree buffer is a scratch/nofile buffer.  Its lines have the format:
---   Line 1 : root node  →  "  |{filename}"
+--   Line 1 : root node  →  "  •{filename}"
 --   Line k  : heading    →  "  [. ]*|{heading_text}"   (from mode.tlines)
 --
 -- Index mapping (root node at line 1 occupies the slot Python's caller
@@ -64,7 +64,11 @@ local function build_tree_lines(buf_name, outline)
     -- Unnamed or scratch buffer: fall back to the raw name.
     tail = buf_name ~= "" and buf_name or "[No Name]"
   end
-  local lines = { "  |" .. tail }
+  -- Use "•" instead of "|" to visually distinguish the root node from
+  -- level-1 headings, which also begin with "  |".  Without this, the root
+  -- looks like a peer of its children and implies it can be navigated with
+  -- J/K the way headings can.
+  local lines = { "  •" .. tail }
   for _, tl in ipairs(outline.tlines) do
     table.insert(lines, tl)
   end
