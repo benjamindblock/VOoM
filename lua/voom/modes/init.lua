@@ -4,8 +4,8 @@
 local M = {}
 
 -- Map of mode name -> loader function (lazy-loaded on first use).
--- Each entry is added as its mode module is ported from the legacy Python
--- implementation in legacy/autoload/voom/voom_vimplugin2657/.
+-- Each entry is added as its mode module is ported from the upstream Python
+-- implementation (git submodule at legacy/autoload/voom/voom_vimplugin2657/).
 M.modes = {
   markdown = function()
     return require("voom.modes.markdown")

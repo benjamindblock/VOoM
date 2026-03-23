@@ -1,7 +1,7 @@
 -- Markdown mode for VOoM: parses Markdown headings and builds an outline tree.
 --
--- This module is a Lua port of the outline-generation logic from the legacy
--- Python implementation in:
+-- This module is a Lua port of the outline-generation logic from the upstream
+-- Python implementation (included as a git submodule at legacy/):
 --   legacy/autoload/voom/voom_vimplugin2657/voom_mode_markdown.py
 --
 -- Public API:

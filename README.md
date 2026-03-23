@@ -5,7 +5,8 @@ creates a tree buffer mirroring the heading structure of the current buffer,
 enabling fast navigation of structured documents.
 
 > **Status:** This is an in-progress Lua rewrite. The original Python-based
-> plugin is preserved in `legacy/` for reference.
+> plugin is included as a git submodule at `legacy/`
+> ([vim-voom/VOoM](https://github.com/vim-voom/VOoM)) for reference.
 
 ## Installation
 
