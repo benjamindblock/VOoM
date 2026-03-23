@@ -1,7 +1,7 @@
 # nvim-voom
 
-nvim-voom is a pure Lua port of the Vim plugin VOoM (Vim Outliner of Markups).
-nvim-voom is a two-pane outliner plugin for Neovim. It creates a tree buffer
+`nvim-voom` is a pure Lua port of the Vim plugin VOoM (Vim Outliner of Markups).
+`nvim-voom` is a two-pane outliner plugin for Neovim. It creates a tree buffer
 mirroring the heading structure of the current buffer, enabling fast navigation
 of structured documents.
 
@@ -39,7 +39,7 @@ mode name to `:Voom` or `:VoomToggle` to override.
 
 ## Tree pane
 
-Opening nvim-voom splits the window with a narrow tree pane on the left. Each
+Opening `nvim-voom` splits the window with a narrow tree pane on the left. Each
 line in the tree represents one heading. Indentation depth mirrors heading
 level:
 
