@@ -13,6 +13,14 @@ M.defaults = {
     enabled = true,
     icons   = { open = "▾", closed = "▶", leaf = "·" },
   },
+  -- Vertical guide lines rendered at each ancestor column of nested headings.
+  -- Set enabled=false to turn them off entirely.
+  -- The guide character is overlaid via nvim_buf_set_extmark; any single
+  -- display-column character can be used.
+  indent_guides = {
+    enabled = true,
+    char    = "│",   -- U+2502 box-drawing vertical bar
+  },
 }
 
 -- Merged config, populated by setup().

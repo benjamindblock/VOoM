@@ -53,17 +53,18 @@ T["apply_fold_indicators"] = MiniTest.new_set({
         levels = { 1, 2, 2, 1 },
         tlines = {
           " · Heading One",
-          " · · Child A",
-          " · · Child B",
+          "   · Child A",
+          "   · Child B",
           " · Heading Two",
         },
       }
       local body_buf = make_scratch_buf()
       -- Tree buf holds the actual display lines (4 heading lines; no root node).
+      -- Format: " " + string.rep("  ", lev-1) + "· " + text
       local tree_lines = {
         " · Heading One",
-        " · · Child A",
-        " · · Child B",
+        "   · Child A",
+        "   · Child B",
         " · Heading Two",
       }
       local tree_buf = make_scratch_buf(tree_lines)
@@ -167,9 +168,9 @@ T["apply_fold_indicators"]["icon column matches heading level indentation"] = fu
   local marks_lev1 = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {})
   MiniTest.expect.equality(marks_lev1[1][3], 1)
 
-  -- Level-2 heading: col = 1 + (2-1)*3 = 4
+  -- Level-2 heading: col = 1 + (2-1)*2 = 3
   local marks_lev2 = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 1, 0 }, { 1, -1 }, {})
-  MiniTest.expect.equality(marks_lev2[1][3], 4)
+  MiniTest.expect.equality(marks_lev2[1][3], 3)
 end
 
 T["apply_fold_indicators"]["clears extmarks when enabled=false"] = function()
@@ -263,6 +264,113 @@ T["update applies fold indicators"]["extmarks refreshed after M.update"] = funct
   local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
   -- Now 4 headings → 4 extmarks.
   MiniTest.expect.equality(#marks, 4)
+end
+
+-- ==============================================================================
+-- render_indent_guides (via apply_fold_indicators)
+-- ==============================================================================
+--
+-- Guide extmarks are rendered inside apply_fold_indicators.  These tests use
+-- the same synthetic outline as the fold-indicator tests above (levels 1,2,2,1)
+-- and query GUIDE_NS for the resulting overlay marks.
+
+T["render_indent_guides"] = MiniTest.new_set({
+  hooks = {
+    pre_case = function()
+      local state = require("voom.state")
+      local outline = {
+        bnodes = { 1, 5, 10, 20 },
+        levels = { 1, 2, 2, 1 },
+        tlines = {
+          " · Heading One",
+          "   · Child A",
+          "   · Child B",
+          " · Heading Two",
+        },
+      }
+      local body_buf = make_scratch_buf()
+      local tree_lines = {
+        " · Heading One",
+        "   · Child A",
+        "   · Child B",
+        " · Heading Two",
+      }
+      local tree_buf = make_scratch_buf(tree_lines)
+      state.register(body_buf, tree_buf, "markdown", outline)
+      T["render_indent_guides"]._body    = body_buf
+      T["render_indent_guides"]._tree    = tree_buf
+      local tree_win = open_float_win(tree_buf)
+      T["render_indent_guides"]._tree_win = tree_win
+    end,
+    post_case = function()
+      local state = require("voom.state")
+      if vim.api.nvim_win_is_valid(T["render_indent_guides"]._tree_win) then
+        vim.api.nvim_win_close(T["render_indent_guides"]._tree_win, true)
+      end
+      state.unregister(T["render_indent_guides"]._body)
+      del_buf(T["render_indent_guides"]._body)
+      del_buf(T["render_indent_guides"]._tree)
+    end,
+  },
+})
+
+T["render_indent_guides"]["no guide marks on level-1 headings"] = function()
+  local tree = require("voom.tree")
+  local tree_buf = T["render_indent_guides"]._tree
+  local body_buf = T["render_indent_guides"]._body
+
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_indent_guides")
+  -- Row 0 is "Heading One" (level 1) — no ancestor columns → no guides.
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {})
+  MiniTest.expect.equality(#marks, 0)
+  -- Row 3 is "Heading Two" (level 1) — same expectation.
+  marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 3, 0 }, { 3, -1 }, {})
+  MiniTest.expect.equality(#marks, 0)
+end
+
+T["render_indent_guides"]["level-2 headings get one guide at correct column"] = function()
+  local tree = require("voom.tree")
+  local tree_buf = T["render_indent_guides"]._tree
+  local body_buf = T["render_indent_guides"]._body
+
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_indent_guides")
+  -- Row 1 is "Child A" (level 2): one guide for ancestor level 1 at col 1.
+  -- col = 1 + (1-1)*2 = 1
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 1, 0 }, { 1, -1 }, {
+    details = true,
+  })
+  MiniTest.expect.equality(#marks, 1)
+  MiniTest.expect.equality(marks[1][3], 1)   -- byte column
+  local vt = marks[1][4].virt_text
+  MiniTest.expect.equality(vt[1][2], "VoomIndentGuide")
+end
+
+T["render_indent_guides"]["clears guide marks when enabled=false"] = function()
+  local tree   = require("voom.tree")
+  local config = require("voom.config")
+  local tree_buf = T["render_indent_guides"]._tree
+  local body_buf = T["render_indent_guides"]._body
+
+  -- First apply with guides enabled to populate marks.
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  -- Disable via config.options.
+  local saved = config.options
+  config.options = {
+    fold_indicators = config.defaults.fold_indicators,
+    indent_guides   = { enabled = false, char = "│" },
+  }
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_indent_guides")
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
+  MiniTest.expect.equality(#marks, 0)
+
+  config.options = saved
 end
 
 return T

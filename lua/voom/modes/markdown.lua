@@ -154,10 +154,11 @@ function M.make_outline(lines, buf_name)
       goto continue
     end
 
-    -- Format the tree display line. One leading space plus one "· " pair per
-    -- level, where the last · is the fold-state icon placeholder.
-    -- Example: level 3 → " · · · My Heading"
-    table.insert(tlines, " " .. string.rep("· ", lev - 1) .. "· " .. head)
+    -- Format the tree display line.  One leading space, then (lev-1) plain
+    -- two-space pairs as indentation (so indent guides can be overlaid
+    -- cleanly), then the fold-state icon placeholder "· ", then the text.
+    -- Example: level 3 → "     · My Heading"  (1 + 2 + 2 spaces then ·)
+    table.insert(tlines, " " .. string.rep("  ", lev - 1) .. "· " .. head)
     table.insert(bnodes, i)
     table.insert(levels, lev)
 

@@ -22,9 +22,10 @@ local config = require("voom.config")
 local modes  = require("voom.modes")
 local state  = require("voom.state")
 
--- Extmark namespace for fold-state icon overlays.  Created once at module
--- load; Neovim returns the same integer for repeated calls with the same name.
-local FOLD_NS = vim.api.nvim_create_namespace("voom_fold_indicators")
+-- Extmark namespaces created once at module load; Neovim returns the same
+-- integer for repeated calls with the same name.
+local FOLD_NS  = vim.api.nvim_create_namespace("voom_fold_indicators")
+local GUIDE_NS = vim.api.nvim_create_namespace("voom_indent_guides")
 
 -- Per-body history for tree-initiated structural operations.  This guarantees
 -- one tree undo step per tree action even when Neovim coalesces underlying
@@ -93,9 +94,10 @@ end
 -- All groups use `default = true` so that colorschemes (and users' init.lua)
 -- can override them without the plugin overwriting their preferences.
 local function define_highlights()
-  vim.api.nvim_set_hl(0, "VoomFoldOpen",   { default = true, fg = "#7aa2f7" }) -- ▾ blue
-  vim.api.nvim_set_hl(0, "VoomFoldClosed", { default = true, fg = "#e0af68" }) -- ▶ amber
-  vim.api.nvim_set_hl(0, "VoomLeafNode",   { default = true, fg = "#565f89" }) -- · muted grey
+  vim.api.nvim_set_hl(0, "VoomFoldOpen",    { default = true, fg = "#7aa2f7" }) -- ▾ blue
+  vim.api.nvim_set_hl(0, "VoomFoldClosed",  { default = true, fg = "#e0af68" }) -- ▶ amber
+  vim.api.nvim_set_hl(0, "VoomLeafNode",    { default = true, fg = "#565f89" }) -- · muted grey
+  vim.api.nvim_set_hl(0, "VoomIndentGuide", { default = true, fg = "#3b4261" }) -- │ dark grey
 end
 
 -- Re-apply highlights whenever the colorscheme changes so user theme overrides
@@ -107,9 +109,42 @@ vim.api.nvim_create_autocmd("ColorScheme", {
 
 define_highlights()
 
+-- Apply vertical guide-line extmarks at each ancestor column of every heading.
+--
+-- For a heading at level N, guide characters are overlaid at the first byte of
+-- each ancestor indentation slot (levels 1 through N-1).  The tree line format
+-- is " " + string.rep("  ", lev-1) + "· " + text, so each indentation slot is
+-- 2 plain bytes wide and ancestor level A occupies bytes [1+(A-1)*2, 1+(A-1)*2+1).
+--
+-- Called from apply_fold_indicators so that all rendering happens in one pass
+-- from every existing call site.
+local function render_indent_guides(tree_buf, outline)
+  vim.api.nvim_buf_clear_namespace(tree_buf, GUIDE_NS, 0, -1)
+
+  local cfg = (config.options and config.options.indent_guides)
+    or config.defaults.indent_guides
+  if not cfg.enabled then return end
+
+  local levels = outline.levels
+
+  for idx, lev in ipairs(levels) do
+    -- extmark rows are 0-indexed; tree line idx maps to extmark row idx-1.
+    local row = idx - 1
+    for ancestor = 1, lev - 1 do
+      -- Each indentation slot is 2 bytes ("  "); guide overlays the first byte.
+      local col = 1 + (ancestor - 1) * 2
+      vim.api.nvim_buf_set_extmark(tree_buf, GUIDE_NS, row, col, {
+        end_col       = col + 1,
+        virt_text     = { { cfg.char, "VoomIndentGuide" } },
+        virt_text_pos = "overlay",
+      })
+    end
+  end
+end
+
 -- Apply virtual-text fold-state icons to every heading line in `tree_buf`.
 --
--- The `|` separator in each heading line is overlaid (not replaced in the
+-- The icon placeholder · in each heading line is overlaid (not replaced in the
 -- buffer) with one of three icons:
 --   ▾  — parent node, subtree visible
 --   ▶  — parent node, subtree folded
@@ -120,10 +155,13 @@ define_highlights()
 -- All existing extmarks in FOLD_NS are cleared before re-applying so that
 -- stale marks never linger after structural edits that change the line count.
 --
+-- Also calls render_indent_guides() so all decorations stay in sync from every
+-- existing call site without needing separate wiring.
+--
 -- Fold state is queried with foldclosed() inside nvim_win_call so the result
 -- reflects the tree window's fold state regardless of which window is current.
 -- If the tree window is not visible (e.g. during a headless test), the
--- function returns early without placing any marks.
+-- function returns early without placing any fold marks (guides still render).
 function M.apply_fold_indicators(tree_buf, body_buf)
   if not vim.api.nvim_buf_is_valid(tree_buf) then return end
 
@@ -131,12 +169,17 @@ function M.apply_fold_indicators(tree_buf, body_buf)
   local cfg = (config.options and config.options.fold_indicators)
     or config.defaults.fold_indicators
 
-  -- Always clear stale marks first, even when the feature is disabled.
+  -- Always clear stale fold marks first, even when the feature is disabled.
   vim.api.nvim_buf_clear_namespace(tree_buf, FOLD_NS, 0, -1)
-  if not cfg.enabled then return end
 
+  -- Fetch outline before the early-return so guides can render independently
+  -- of whether fold indicators are enabled.
   local outline = body_buf and state.get_outline(body_buf)
   if not outline then return end
+
+  render_indent_guides(tree_buf, outline)
+
+  if not cfg.enabled then return end
 
   -- Fold state is window-local; we must query from inside the tree window.
   local tree_win = find_win_for_buf(tree_buf)
@@ -144,7 +187,6 @@ function M.apply_fold_indicators(tree_buf, body_buf)
 
   local levels  = outline.levels
   local n_nodes = #levels
-  local n_lines = vim.api.nvim_buf_line_count(tree_buf)
   local icons   = cfg.icons
 
   -- Every tree line is a heading; tree line k ↔ levels[k].
@@ -174,11 +216,11 @@ function M.apply_fold_indicators(tree_buf, body_buf)
       icon, hl = icons.leaf, "VoomLeafNode"
     end
 
-    -- The icon-placeholder · sits at byte offset 1 + (lev-1)*3 (0-indexed).
-    -- Each "· " pair is 3 bytes (· is 2-byte UTF-8 + 1-byte space).
-    -- Format: " " + string.rep("· ", lev-1) + "· " + text
+    -- The icon-placeholder · sits at byte offset 1 + (lev-1)*2 (0-indexed).
+    -- Indentation is now "  " (2 plain bytes per level); · is still 2-byte UTF-8.
+    -- Format: " " + string.rep("  ", lev-1) + "· " + text
     local lev = levels[idx]
-    local col = 1 + (lev - 1) * 3
+    local col = 1 + (lev - 1) * 2
 
     vim.api.nvim_buf_set_extmark(tree_buf, FOLD_NS, lnum - 1, col, {
       end_col       = col + 2,   -- · is 2 UTF-8 bytes

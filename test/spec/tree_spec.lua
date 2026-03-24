@@ -237,8 +237,8 @@ T["tree.create"]["tree line 1 is the first heading"] = function()
 
   -- Line 1 is the first heading: "# Project Overview" → level 1, no indent.
   MiniTest.expect.equality(tree_lines[1], " · Project Overview")
-  -- Line 2 is the second heading: "## Installation" → level 2, one "· ".
-  MiniTest.expect.equality(tree_lines[2], " · · Installation")
+  -- Line 2 is the second heading: "## Installation" → level 2, two-space indent.
+  MiniTest.expect.equality(tree_lines[2], "   · Installation")
 end
 
 T["tree.create"]["registers body and tree in state"] = function()
@@ -644,7 +644,7 @@ T["tree.update"]["rebuilds tree lines after body content changes"] = function()
   -- After update: 2 headings = 2 lines.
   local after = vim.api.nvim_buf_get_lines(tree_buf, 0, -1, false)
   MiniTest.expect.equality(#after, 2)
-  MiniTest.expect.equality(after[2], " · · Sub Heading")
+  MiniTest.expect.equality(after[2], "   · Sub Heading")
 end
 
 -- ==============================================================================
