@@ -31,4 +31,13 @@ COMMANDS                                                    *voom-commands*
 :Voomlog            Open the VOoM log buffer.
 
 ==============================================================================
+KEYMAP NOTES
+
+In the tree pane, structural outline edits can be undone/redone without
+switching to the body pane:
+
+    u       Undo last body change.
+    CTRL-R  Redo last undone body change.
+
+==============================================================================
  vim:tw=78:ts=8:ft=help:norl:

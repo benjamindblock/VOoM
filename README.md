@@ -104,6 +104,7 @@ saved, and also when you re-enter the body after an out-of-band edit.
 | `__` / `<C-Down>`  | Move the current node and its subtree down (swap with next sibling)     |
 | `<<` / `<C-Left>`  | Promote: decrease heading level by 1                                    |
 | `>>` / `<C-Right>` | Demote: increase heading level by 1                                     |
+| `u` / `<C-r>`      | Undo / redo via the body buffer's undo tree (keeps focus in tree pane)  |
 
 When inserting a new node (`aa` / `AA`), the cursor lands on the placeholder
 text `NewHeadline` in the body buffer — use `ciw` to replace it immediately.

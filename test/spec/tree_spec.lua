@@ -53,6 +53,22 @@ local function find_tree_lnum_by_text(tree_buf, text)
   return nil
 end
 
+local function top_heading_lines(buf)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local out = {}
+  for _, line in ipairs(lines) do
+    if line:match("^#%s") then
+      table.insert(out, line)
+    end
+  end
+  return out
+end
+
+local function press(keys)
+  local term = vim.api.nvim_replace_termcodes(keys, true, false, true)
+  vim.api.nvim_feedkeys(term, "xt", false)
+end
+
 -- ==============================================================================
 -- Module loading
 -- ==============================================================================
@@ -850,6 +866,266 @@ T["tab keymap"]["moves focus to body at the selected heading"] = function()
   local expected = state.get_outline(body).bnodes[2]
   local cursor   = vim.api.nvim_win_get_cursor(body_win)
   MiniTest.expect.equality(cursor[1], expected)
+end
+
+-- ==============================================================================
+-- tree undo / redo from tree pane
+-- ==============================================================================
+
+T["tree.undo_redo"] = MiniTest.new_set({
+  hooks = {
+    pre_case = function()
+      T["tree.undo_redo"]._body_buf = nil
+      T["tree.undo_redo"]._tree_buf = nil
+    end,
+    post_case = function()
+      local state = require("voom.state")
+      local body  = T["tree.undo_redo"]._body_buf
+      if body and state.is_body(body) then
+        require("voom.tree").close(body)
+      end
+      del_buf(T["tree.undo_redo"]._body_buf)
+    end,
+  },
+})
+
+T["tree.undo_redo"]["undoes move_up one action at a time and preserves tree cursor line"] = function()
+  local tree_mod = require("voom.tree")
+  local lines = {
+    "# One", "", "one",
+    "# Two", "", "two",
+    "# Three", "", "three",
+    "# Four", "", "four",
+  }
+  local body = make_scratch_buf(lines, "undo_move.md")
+  T["tree.undo_redo"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.undo_redo"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  vim.api.nvim_set_current_win(tree_win)
+
+  -- Move "Three" up twice.
+  vim.api.nvim_win_set_cursor(tree_win, { 4, 0 })
+  press("^^")
+  press("^^")
+  MiniTest.expect.equality(
+    top_heading_lines(body),
+    { "# Three", "# One", "# Two", "# Four" }
+  )
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1], 2)
+
+  -- First undo should revert only one move.
+  tree_mod.tree_undo(tree_buf)
+  MiniTest.expect.equality(
+    top_heading_lines(body),
+    { "# One", "# Three", "# Two", "# Four" }
+  )
+  -- Cursor should not jump to top/root.
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1], 3)
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1] ~= 1, true)
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_win)
+
+  -- Second undo returns to original.
+  tree_mod.tree_undo(tree_buf)
+  MiniTest.expect.equality(
+    top_heading_lines(body),
+    { "# One", "# Two", "# Three", "# Four" }
+  )
+
+  -- Redo reapplies one step.
+  tree_mod.tree_redo(tree_buf)
+  MiniTest.expect.equality(
+    top_heading_lines(body),
+    { "# One", "# Three", "# Two", "# Four" }
+  )
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_win)
+end
+
+T["tree.undo_redo"]["undoes demote from tree pane"] = function()
+  local tree_mod = require("voom.tree")
+  local lines = {
+    "# One", "", "one",
+    "# Two", "", "two",
+    "# Three", "", "three",
+  }
+  local body = make_scratch_buf(lines, "undo_demote.md")
+  T["tree.undo_redo"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.undo_redo"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  vim.api.nvim_set_current_win(tree_win)
+
+  -- "Two" is tree line 3. Demote should make it level-2.
+  vim.api.nvim_win_set_cursor(tree_win, { 3, 0 })
+  press(">>")
+  MiniTest.expect.equality(find_tree_lnum_by_text(tree_buf, "Two") ~= nil, true)
+  MiniTest.expect.equality(vim.api.nvim_buf_get_lines(body, 0, -1, false)[5], "## Two")
+
+  tree_mod.tree_undo(tree_buf)
+  MiniTest.expect.equality(vim.api.nvim_buf_get_lines(body, 0, -1, false)[4], "# Two")
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_win)
+end
+
+T["tree.undo_redo"]["undoes direct body edits from tree pane"] = function()
+  local tree_mod = require("voom.tree")
+  local lines = {
+    "# One", "", "one",
+    "# Two", "", "two",
+  }
+  local body = make_scratch_buf(lines, "undo_body_edit.md")
+  T["tree.undo_redo"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.undo_redo"]._tree_buf = tree_buf
+
+  local body_win = find_win_for_buf(body)
+  local tree_win = find_win_for_buf(tree_buf)
+  vim.api.nvim_set_current_win(body_win)
+  vim.api.nvim_buf_set_lines(body, 0, 1, false, { "# One changed" })
+
+  vim.api.nvim_set_current_win(tree_win)
+  tree_mod.tree_undo(tree_buf)
+
+  MiniTest.expect.equality(vim.api.nvim_buf_get_lines(body, 0, 1, false)[1], "# One")
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_win)
+end
+
+T["tree.undo_redo"]["no-error on unavailable redo"] = function()
+  local tree_mod = require("voom.tree")
+  local lines = {
+    "# One", "", "one",
+    "# Two", "", "two",
+  }
+  local body = make_scratch_buf(lines, "redo_unavailable.md")
+  T["tree.undo_redo"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.undo_redo"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  vim.api.nvim_set_current_win(tree_win)
+
+  local before = vim.api.nvim_buf_get_lines(body, 0, -1, false)
+  MiniTest.expect.no_error(function()
+    tree_mod.tree_redo(tree_buf)
+  end)
+  local after = vim.api.nvim_buf_get_lines(body, 0, -1, false)
+  MiniTest.expect.equality(after, before)
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_win)
+end
+
+T["tree.undo_redo"]["display and editing remain siblings after << then >> on Display"] = function()
+  local tree_mod = require("voom.tree")
+  local state    = require("voom.state")
+  local lines    = load_fixture("readme_outline.md")
+  local body     = make_scratch_buf(lines, "readme_outline.md")
+  T["tree.undo_redo"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.undo_redo"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  vim.api.nvim_set_current_win(tree_win)
+
+  local display_lnum = find_tree_lnum_by_text(tree_buf, "Display")
+  MiniTest.expect.equality(display_lnum ~= nil, true)
+
+  vim.api.nvim_win_set_cursor(tree_win, { display_lnum, 0 })
+  press("<<")
+  press(">>")
+
+  local outline = state.get_outline(body)
+  local nav_lnum = find_tree_lnum_by_text(tree_buf, "Navigation")
+  local fold_lnum = find_tree_lnum_by_text(tree_buf, "Folding")
+  local disp_lnum = find_tree_lnum_by_text(tree_buf, "Display")
+  local edit_lnum = find_tree_lnum_by_text(tree_buf, "Editing")
+
+  MiniTest.expect.equality(nav_lnum ~= nil, true)
+  MiniTest.expect.equality(fold_lnum ~= nil, true)
+  MiniTest.expect.equality(disp_lnum ~= nil, true)
+  MiniTest.expect.equality(edit_lnum ~= nil, true)
+
+  local nav_level = outline.levels[nav_lnum - 1]
+  local fold_level = outline.levels[fold_lnum - 1]
+  local disp_level = outline.levels[disp_lnum - 1]
+  local edit_level = outline.levels[edit_lnum - 1]
+
+  MiniTest.expect.equality(fold_level, nav_level)
+  MiniTest.expect.equality(disp_level, nav_level)
+  MiniTest.expect.equality(edit_level, nav_level)
+end
+
+T["tree.undo_redo"]["move_up keeps Keymaps - body pane as sibling of Tree pane"] = function()
+  local tree_mod = require("voom.tree")
+  local state    = require("voom.state")
+  local lines    = load_fixture("readme_outline.md")
+  local body     = make_scratch_buf(lines, "readme_outline.md")
+  T["tree.undo_redo"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.undo_redo"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  vim.api.nvim_set_current_win(tree_win)
+
+  local kb_lnum = find_tree_lnum_by_text(tree_buf, "Keymaps — body pane")
+  MiniTest.expect.equality(kb_lnum ~= nil, true)
+
+  vim.api.nvim_win_set_cursor(tree_win, { kb_lnum, 0 })
+  press("^^")
+
+  local outline = state.get_outline(body)
+  local tree_pane_lnum = find_tree_lnum_by_text(tree_buf, "Tree pane")
+  local kb_new_lnum = find_tree_lnum_by_text(tree_buf, "Keymaps — body pane")
+
+  MiniTest.expect.equality(tree_pane_lnum ~= nil, true)
+  MiniTest.expect.equality(kb_new_lnum ~= nil, true)
+
+  local tree_pane_level = outline.levels[tree_pane_lnum - 1]
+  local kb_level = outline.levels[kb_new_lnum - 1]
+  MiniTest.expect.equality(kb_level, tree_pane_level)
+end
+
+T["tree.undo_redo"]["move_down keeps Tree pane sibling between Keymaps tree/body sections"] = function()
+  local tree_mod = require("voom.tree")
+  local state    = require("voom.state")
+  local lines    = load_fixture("readme_outline.md")
+  local body     = make_scratch_buf(lines, "readme_outline.md")
+  T["tree.undo_redo"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.undo_redo"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  vim.api.nvim_set_current_win(tree_win)
+
+  local tree_pane_lnum = find_tree_lnum_by_text(tree_buf, "Tree pane")
+  MiniTest.expect.equality(tree_pane_lnum ~= nil, true)
+
+  vim.api.nvim_win_set_cursor(tree_win, { tree_pane_lnum, 0 })
+  press("__")
+
+  local outline = state.get_outline(body)
+  local keymaps_tree_lnum = find_tree_lnum_by_text(tree_buf, "Keymaps — tree pane")
+  local tree_pane_new_lnum = find_tree_lnum_by_text(tree_buf, "Tree pane")
+  local keymaps_body_lnum = find_tree_lnum_by_text(tree_buf, "Keymaps — body pane")
+
+  MiniTest.expect.equality(keymaps_tree_lnum ~= nil, true)
+  MiniTest.expect.equality(tree_pane_new_lnum ~= nil, true)
+  MiniTest.expect.equality(keymaps_body_lnum ~= nil, true)
+  MiniTest.expect.equality(keymaps_tree_lnum < tree_pane_new_lnum, true)
+  MiniTest.expect.equality(tree_pane_new_lnum < keymaps_body_lnum, true)
+
+  local keymaps_tree_level = outline.levels[keymaps_tree_lnum - 1]
+  local tree_pane_level = outline.levels[tree_pane_new_lnum - 1]
+  local keymaps_body_level = outline.levels[keymaps_body_lnum - 1]
+  MiniTest.expect.equality(tree_pane_level, keymaps_tree_level)
+  MiniTest.expect.equality(tree_pane_level, keymaps_body_level)
 end
 
 -- ==============================================================================

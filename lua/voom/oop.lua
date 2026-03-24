@@ -121,11 +121,13 @@ local function refresh_after_edit(body_buf)
 end
 
 -- Write `lines` (a Lua table) into the body buffer, replacing all content.
--- Groups the write with the preceding edit into a single undo step.
+-- Each OOP command should create its own undo step in the body undo tree.
 local function write_body(body_buf, lines)
-  -- Group with previous change so the entire operation is one undo step.
-  pcall(vim.cmd, "undojoin")
-  vim.api.nvim_buf_set_lines(body_buf, 0, -1, false, lines)
+  -- Apply from inside the body buffer context so undo history is segmented by
+  -- each OOP command invocation (rather than coalescing non-current-buffer writes).
+  vim.api.nvim_buf_call(body_buf, function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+  end)
 end
 
 -- ==============================================================================
@@ -667,19 +669,14 @@ function M.move_up(tree_buf)
   local sub_count = M.count_subnodes(levels, tlnum)
   local ln2 = ln1 + sub_count -- bnodes index of last node in subtree
 
-  -- lnUp1, lnUp2: the range before which we move (the previous sibling's branch).
+  -- lnUp1: previous sibling root (bnodes index).
   local lnUp1 = prev_sib - 1 -- bnodes index
-  local lnUp2 = ln1 - 1       -- bnodes index of last node in the "above" range
 
   -- Compute level delta.
-  -- If lnUp1 is a first child of lnUp2's parent, keep the insertion level.
+  -- Move-up swaps sibling branches, so the moved root should take the previous
+  -- sibling's level (and remain a sibling), regardless of descendants above.
   local lev_old = levels[ln1]
-  local lev_new
-  if levels[lnUp2] + 1 == levels[lnUp1] then
-    lev_new = levels[lnUp1]
-  else
-    lev_new = levels[lnUp2]
-  end
+  local lev_new = levels[lnUp1]
   local lev_delta = lev_new - lev_old
 
   -- Body ranges.
@@ -814,18 +811,10 @@ function M.move_down(tree_buf)
   local lev_new = levels[lnDn1]
 
   if lnDn1 < #levels then
-    -- lnDn1 has children — check fold state.
+    -- lnDn1 has children — always insert after the full sibling branch.
+    -- move_down is a sibling swap, so never insert as child based on fold state.
     if levels[lnDn1] < levels[lnDn1 + 1] then
-      local fold_end = vim.api.nvim_win_call(tree_win, function()
-        return vim.fn.foldclosedend(next_sib)
-      end)
-      if fold_end ~= -1 then
-        -- Folded: insert after entire subtree.
-        lnIns = lnDn1 + M.count_subnodes(levels, next_sib)
-      else
-        -- Not folded: insert as child.
-        lev_new = lev_new + 1
-      end
+      lnIns = lnDn1 + M.count_subnodes(levels, next_sib)
     end
   end
 
@@ -926,7 +915,7 @@ end
 -- promote (<<  / <C-Left>)
 -- ==============================================================================
 
--- Promote (decrease heading level by 1) for the current node and its subtree.
+-- Promote (decrease heading level by 1) for the current node.
 function M.promote(tree_buf)
   local body_buf = state.get_body(tree_buf)
   if not body_buf then return end
@@ -948,8 +937,7 @@ function M.promote(tree_buf)
   local total_body = vim.api.nvim_buf_line_count(body_buf)
 
   local ln1 = tlnum - 1
-  local sub_count = M.count_subnodes(levels, tlnum)
-  local ln2 = ln1 + sub_count
+  local ln2 = ln1
 
   -- Check: cannot promote if any node in the range is already at level 1.
   for i = ln1, ln2 do
@@ -1007,7 +995,7 @@ end
 -- demote (>> / <C-Right>)
 -- ==============================================================================
 
--- Demote (increase heading level by 1) for the current node and its subtree.
+-- Demote (increase heading level by 1) for the current node.
 function M.demote(tree_buf)
   local body_buf = state.get_body(tree_buf)
   if not body_buf then return end
@@ -1029,8 +1017,7 @@ function M.demote(tree_buf)
   local total_body = vim.api.nvim_buf_line_count(body_buf)
 
   local ln1 = tlnum - 1
-  local sub_count = M.count_subnodes(levels, tlnum)
-  local ln2 = ln1 + sub_count
+  local ln2 = ln1
 
   -- Check: cannot demote if it's already a child of the preceding node.
   -- The legacy code checks: levels[ln1-1] > levels[ln1-2], meaning the node

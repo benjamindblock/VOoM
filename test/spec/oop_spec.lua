@@ -811,7 +811,7 @@ T["demote"]["increases heading level by 1"] = function()
   MiniTest.expect.equality(found, true)
 end
 
-T["demote"]["promotes subtree descendants too"] = function()
+T["demote"]["changes only current heading level in normal mode"] = function()
   local tree_mod = require("voom.tree")
   local oop = require("voom.oop")
 
@@ -826,7 +826,7 @@ T["demote"]["promotes subtree descendants too"] = function()
   end
 
   -- Demote "Heading One" (level 1) with children Sub A, Sub B (level 2).
-  -- After demote: H1→level 2, SubA→level 3, SubB→level 3.
+  -- In normal mode only the current heading should change.
   if tree_win then
     vim.api.nvim_set_current_win(tree_win)
     vim.api.nvim_win_set_cursor(tree_win, { 2, 0 })
@@ -835,12 +835,15 @@ T["demote"]["promotes subtree descendants too"] = function()
   oop.demote(tree_buf)
 
   local after = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  -- Check Sub A became level 3 (### Sub A).
-  local found = false
+  -- Sub A should remain level 2.
+  local found_sub_a = false
+  local found_sub_a_too_deep = false
   for _, l in ipairs(after) do
-    if l == "### Sub A" then found = true break end
+    if l == "## Sub A" then found_sub_a = true end
+    if l == "### Sub A" then found_sub_a_too_deep = true end
   end
-  MiniTest.expect.equality(found, true)
+  MiniTest.expect.equality(found_sub_a, true)
+  MiniTest.expect.equality(found_sub_a_too_deep, false)
 end
 
 -- ==============================================================================
@@ -923,6 +926,51 @@ T["move_up"]["no-op on first sibling"] = function()
   end
 end
 
+T["move_up"]["keeps sibling level when previous sibling has children"] = function()
+  local tree_mod = require("voom.tree")
+  local oop = require("voom.oop")
+  local state = require("voom.state")
+
+  local lines = load_fixture("readme_outline.md")
+  local buf = make_scratch_buf(lines, "moveup_prev_with_children.md")
+  vim.api.nvim_set_current_buf(buf)
+  local tree_buf = tree_mod.create(buf, "markdown")
+
+  local tree_win
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(w) == tree_buf then tree_win = w break end
+  end
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  local function find_lnum(text)
+    local tree_lines = vim.api.nvim_buf_get_lines(tree_buf, 0, -1, false)
+    for i, line in ipairs(tree_lines) do
+      if line:find(text, 1, true) then
+        return i
+      end
+    end
+    return nil
+  end
+
+  local body_keymaps_lnum = find_lnum("Keymaps — body pane")
+  MiniTest.expect.equality(body_keymaps_lnum ~= nil, true)
+
+  if tree_win then
+    vim.api.nvim_set_current_win(tree_win)
+    vim.api.nvim_win_set_cursor(tree_win, { body_keymaps_lnum, 0 })
+  end
+
+  oop.move_up(tree_buf)
+
+  local outline = state.get_outline(buf)
+  local tree_pane_lnum2 = find_lnum("Tree pane")
+  local body_keymaps_lnum2 = find_lnum("Keymaps — body pane")
+  local tree_pane_level = outline.levels[tree_pane_lnum2 - 1]
+  local body_keymaps_level = outline.levels[body_keymaps_lnum2 - 1]
+
+  MiniTest.expect.equality(body_keymaps_level, tree_pane_level)
+end
+
 T["move_down"] = MiniTest.new_set({
   hooks = {
     post_case = function()
@@ -997,6 +1045,57 @@ T["move_down"]["no-op on last sibling"] = function()
   for i = 1, #before do
     MiniTest.expect.equality(before[i], after[i])
   end
+end
+
+T["move_down"]["keeps moved node as sibling when next sibling has children"] = function()
+  local tree_mod = require("voom.tree")
+  local oop = require("voom.oop")
+  local state = require("voom.state")
+
+  local lines = load_fixture("readme_outline.md")
+  local buf = make_scratch_buf(lines, "movedn_next_sib_children.md")
+  vim.api.nvim_set_current_buf(buf)
+  local tree_buf = tree_mod.create(buf, "markdown")
+
+  local tree_win
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(w) == tree_buf then tree_win = w break end
+  end
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  local function find_lnum(text)
+    local tree_lines = vim.api.nvim_buf_get_lines(tree_buf, 0, -1, false)
+    for i, line in ipairs(tree_lines) do
+      if line:find(text, 1, true) then
+        return i
+      end
+    end
+    return nil
+  end
+
+  local tree_pane_lnum = find_lnum("Tree pane")
+  MiniTest.expect.equality(tree_pane_lnum ~= nil, true)
+  if tree_win then
+    vim.api.nvim_set_current_win(tree_win)
+    vim.api.nvim_win_set_cursor(tree_win, { tree_pane_lnum, 0 })
+  end
+
+  oop.move_down(tree_buf)
+
+  local outline = state.get_outline(buf)
+  local keymaps_tree_lnum = find_lnum("Keymaps — tree pane")
+  local tree_pane_new_lnum = find_lnum("Tree pane")
+  local keymaps_body_lnum = find_lnum("Keymaps — body pane")
+  MiniTest.expect.equality(keymaps_tree_lnum ~= nil, true)
+  MiniTest.expect.equality(tree_pane_new_lnum ~= nil, true)
+  MiniTest.expect.equality(keymaps_body_lnum ~= nil, true)
+
+  local keymaps_tree_level = outline.levels[keymaps_tree_lnum - 1]
+  local tree_pane_level = outline.levels[tree_pane_new_lnum - 1]
+  local keymaps_body_level = outline.levels[keymaps_body_lnum - 1]
+
+  MiniTest.expect.equality(tree_pane_level, keymaps_tree_level)
+  MiniTest.expect.equality(tree_pane_level, keymaps_body_level)
 end
 
 -- ==============================================================================

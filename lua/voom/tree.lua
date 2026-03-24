@@ -32,6 +32,19 @@ local state  = require("voom.state")
 -- load; Neovim returns the same integer for repeated calls with the same name.
 local FOLD_NS = vim.api.nvim_create_namespace("voom_fold_indicators")
 
+-- Per-body history for tree-initiated structural operations.  This guarantees
+-- one tree undo step per tree action even when Neovim coalesces underlying
+-- buffer writes in the body undo tree.
+--
+-- shape: [body_buf] = { undo_stack = {entry,...}, redo_stack = {entry,...} }
+-- entry: {
+--   before_lines = {string,...},
+--   after_lines  = {string,...},
+--   before_lnum  = int,
+--   after_lnum   = int,
+-- }
+local TREE_HISTORY = {}
+
 -- ==============================================================================
 -- Internal helpers
 -- ==============================================================================
@@ -202,6 +215,88 @@ local function disable_keys(buf, keys)
   for _, key in ipairs(keys) do
     vim.api.nvim_buf_set_keymap(buf, "n", key, "<Nop>", { noremap = true, silent = true })
   end
+end
+
+local function lines_equal(a, b)
+  if #a ~= #b then return false end
+  for i = 1, #a do
+    if a[i] ~= b[i] then return false end
+  end
+  return true
+end
+
+local function history_for_body(body_buf)
+  local h = TREE_HISTORY[body_buf]
+  if h then return h end
+  h = { undo_stack = {}, redo_stack = {} }
+  TREE_HISTORY[body_buf] = h
+  return h
+end
+
+local function clear_history_for_body(body_buf)
+  TREE_HISTORY[body_buf] = nil
+end
+
+local function apply_body_snapshot(body_buf, lines)
+  vim.api.nvim_buf_call(body_buf, function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+  end)
+end
+
+local function restore_tree_cursor(tree_buf, body_buf, preferred_lnum)
+  local tree_win = find_win_for_buf(tree_buf)
+  if not tree_win then return end
+  local max_lnum = vim.api.nvim_buf_line_count(tree_buf)
+  if max_lnum < 1 then max_lnum = 1 end
+  local lnum = math.max(1, math.min(preferred_lnum or 1, max_lnum))
+  pcall(vim.api.nvim_win_set_cursor, tree_win, { lnum, 0 })
+  state.set_snLn(body_buf, lnum)
+  if vim.api.nvim_win_is_valid(tree_win) then
+    vim.api.nvim_set_current_win(tree_win)
+  end
+end
+
+-- Execute a structural tree operation and record a per-action snapshot for
+-- deterministic tree-side undo/redo.
+local function run_structural_action_with_history(tree_buf, fn)
+  local body_buf = state.get_body(tree_buf)
+  if not body_buf then return end
+  if not state.is_body(body_buf) then return end
+  local tree_win = find_win_for_buf(tree_buf)
+  if not tree_win then return end
+
+  local before_lines = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
+  local before_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
+
+  fn()
+
+  local after_lines = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
+  if lines_equal(before_lines, after_lines) then
+    return
+  end
+
+  local after_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
+  local history = history_for_body(body_buf)
+  table.insert(history.undo_stack, {
+    before_lines = before_lines,
+    after_lines  = after_lines,
+    before_lnum  = before_lnum,
+    after_lnum   = after_lnum,
+  })
+  history.redo_stack = {}
+end
+
+-- Given sorted heading start lines (`bnodes`) and a body cursor line, return
+-- the owning tree line number (root=1 when cursor is above the first heading).
+local function tree_lnum_for_body_line(bnodes, cursor_line)
+  local target_tree_lnum = 1
+  for i = #bnodes, 1, -1 do
+    if bnodes[i] <= cursor_line then
+      target_tree_lnum = i + 1
+      break
+    end
+  end
+  return target_tree_lnum
 end
 
 -- ==============================================================================
@@ -759,21 +854,8 @@ function M.body_select(body_buf)
   local cursor_line = vim.api.nvim_win_get_cursor(body_win)[1]
   local bnodes = outline.bnodes
 
-  -- Linear scan for the largest bnode ≤ cursor_line.
-  -- bnodes is ordered (monotonically non-decreasing), so we walk it in
-  -- reverse to stop at the first match.  A binary search would be faster for
-  -- very large outlines, but linear scan is simpler and correct for typical
-  -- document sizes (hundreds of headings at most).
-  --
-  -- TODO: switch to binary search if performance becomes a concern with
-  --       documents that have thousands of headings.
-  local target_tree_lnum = 1   -- default: root
-  for i = #bnodes, 1, -1 do
-    if bnodes[i] <= cursor_line then
-      target_tree_lnum = i + 1  -- bnodes[i] → tree line i+1
-      break
-    end
-  end
+  -- Linear reverse scan for largest bnode ≤ cursor_line.
+  local target_tree_lnum = tree_lnum_for_body_line(bnodes, cursor_line)
 
   state.set_snLn(body_buf, target_tree_lnum)
 
@@ -785,6 +867,108 @@ function M.body_select(body_buf)
 
   -- Keep focus in the body window regardless.
   vim.api.nvim_set_current_win(body_win)
+end
+
+-- Execute an undo-tree command ("undo" / "redo") against the associated body
+-- buffer while keeping focus in the tree window.
+local function tree_apply_undo_command(tree_buf, cmd)
+  local body_buf = state.get_body(tree_buf)
+  if not body_buf then return end
+  if not state.is_body(body_buf) then return end
+
+  local body_win = find_win_for_buf(body_buf)
+  local tree_win = find_win_for_buf(tree_buf)
+  if not body_win or not tree_win then return end
+  local prev_tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
+
+  local ok = pcall(function()
+    vim.api.nvim_win_call(body_win, function()
+      vim.cmd(cmd)
+    end)
+  end)
+
+  if not ok then
+    vim.api.nvim_echo(
+      { { "VOoM: " .. cmd .. " unavailable", "WarningMsg" } },
+      true, {}
+    )
+    if tree_win and vim.api.nvim_win_is_valid(tree_win) then
+      vim.api.nvim_set_current_win(tree_win)
+    end
+    return
+  end
+
+  M.update(body_buf)
+
+  local target_tree_lnum = prev_tree_lnum
+  local max_tree_lnum = vim.api.nvim_buf_line_count(tree_buf)
+  if max_tree_lnum < 1 then max_tree_lnum = 1 end
+  target_tree_lnum = math.max(1, math.min(target_tree_lnum, max_tree_lnum))
+
+  -- If cursor restoration ever fails, fall back to selecting the node that owns
+  -- the current body cursor line.
+  if tree_win and vim.api.nvim_win_is_valid(tree_win) then
+    local ok = pcall(vim.api.nvim_win_set_cursor, tree_win, { target_tree_lnum, 0 })
+    if not ok then
+      local outline = state.get_outline(body_buf)
+      if outline then
+        local body_cursor = vim.api.nvim_win_get_cursor(body_win)[1]
+        target_tree_lnum = tree_lnum_for_body_line(outline.bnodes, body_cursor)
+        target_tree_lnum = math.max(1, math.min(target_tree_lnum, max_tree_lnum))
+        pcall(vim.api.nvim_win_set_cursor, tree_win, { target_tree_lnum, 0 })
+      end
+    end
+  end
+
+  state.set_snLn(body_buf, target_tree_lnum)
+
+  if tree_win and vim.api.nvim_win_is_valid(tree_win) then
+    vim.api.nvim_set_current_win(tree_win)
+  end
+end
+
+-- Undo the latest body change from the tree pane, then refresh tree state.
+function M.tree_undo(tree_buf)
+  local body_buf = state.get_body(tree_buf)
+  if body_buf then
+    local history = TREE_HISTORY[body_buf]
+    if history and #history.undo_stack > 0 then
+      local entry = table.remove(history.undo_stack)
+      local cur_lines = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
+      if lines_equal(cur_lines, entry.after_lines) then
+        apply_body_snapshot(body_buf, entry.before_lines)
+        M.update(body_buf)
+        restore_tree_cursor(tree_buf, body_buf, entry.before_lnum)
+        table.insert(history.redo_stack, entry)
+        return
+      end
+      -- Body has drifted relative to recorded snapshots; invalidate custom
+      -- history and fall back to native body undo behavior.
+      clear_history_for_body(body_buf)
+    end
+  end
+  tree_apply_undo_command(tree_buf, "undo")
+end
+
+-- Redo the latest body change from the tree pane, then refresh tree state.
+function M.tree_redo(tree_buf)
+  local body_buf = state.get_body(tree_buf)
+  if body_buf then
+    local history = TREE_HISTORY[body_buf]
+    if history and #history.redo_stack > 0 then
+      local entry = table.remove(history.redo_stack)
+      local cur_lines = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
+      if lines_equal(cur_lines, entry.before_lines) then
+        apply_body_snapshot(body_buf, entry.after_lines)
+        M.update(body_buf)
+        restore_tree_cursor(tree_buf, body_buf, entry.after_lnum)
+        table.insert(history.undo_stack, entry)
+        return
+      end
+      clear_history_for_body(body_buf)
+    end
+  end
+  tree_apply_undo_command(tree_buf, "redo")
 end
 
 -- ==============================================================================
@@ -975,37 +1159,79 @@ function M.set_keymaps(tree_buf, body_buf)
   -- Move up / down.
   vim.api.nvim_buf_set_keymap(tree_buf, "n", "^^", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").move_up(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").move_up(tree_buf)
+      end)
+    end,
   })
   vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Up>", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").move_up(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").move_up(tree_buf)
+      end)
+    end,
   })
   vim.api.nvim_buf_set_keymap(tree_buf, "n", "__", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").move_down(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").move_down(tree_buf)
+      end)
+    end,
   })
   vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Down>", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").move_down(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").move_down(tree_buf)
+      end)
+    end,
   })
 
   -- Promote / demote.
   vim.api.nvim_buf_set_keymap(tree_buf, "n", "<<", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").promote(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").promote(tree_buf)
+      end)
+    end,
   })
   vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Left>", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").promote(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").promote(tree_buf)
+      end)
+    end,
   })
   vim.api.nvim_buf_set_keymap(tree_buf, "n", ">>", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").demote(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").demote(tree_buf)
+      end)
+    end,
   })
   vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Right>", "", {
     noremap = true, silent = true,
-    callback = function() require("voom.oop").demote(tree_buf) end,
+    callback = function()
+      run_structural_action_with_history(tree_buf, function()
+        require("voom.oop").demote(tree_buf)
+      end)
+    end,
+  })
+
+  -- Undo/redo against the body buffer while keeping focus in tree.
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "u", "", {
+    noremap = true, silent = true,
+    callback = function() M.tree_undo(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-r>", "", {
+    noremap = true, silent = true,
+    callback = function() M.tree_redo(tree_buf) end,
   })
 
   -- Disable text-modification keys so the buffer feels truly read-only
@@ -1017,7 +1243,6 @@ function M.set_keymaps(tree_buf, body_buf)
   -- 's', 'S', 'o', 'O', 'c', 'C', 'D', 'U' are mapped to navigation above.
   disable_keys(tree_buf, {
     "r", "R", "x", "X",
-    "u", "<C-r>",
     "zf", "zF", "zd", "zD",
   })
 
@@ -1223,6 +1448,7 @@ function M.close(body_buf)
   -- Unregister is also called by the BufWipeout autocmd, but calling it
   -- here handles the case where the buffer was already wiped before close().
   state.unregister(body_buf)
+  clear_history_for_body(body_buf)
 
   -- Clean up the per-body augroup in case close() was called directly
   -- (not through BufWipeout).
