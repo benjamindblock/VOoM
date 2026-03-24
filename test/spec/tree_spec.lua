@@ -197,7 +197,7 @@ T["tree.create"]["tree line 1 is the root node with filename"] = function()
 
   local first = vim.api.nvim_buf_get_lines(tree_buf, 0, 1, false)[1]
   -- Root node contains the filename tail.
-  MiniTest.expect.equality(first:match("|sample%.md") ~= nil, true)
+  MiniTest.expect.equality(first:match("•sample%.md") ~= nil, true)
 end
 
 T["tree.create"]["tree lines 2+ match headings from sample.md"] = function()
