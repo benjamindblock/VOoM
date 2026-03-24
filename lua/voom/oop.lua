@@ -1091,6 +1091,10 @@ end
 -- @param body_buf    number  body buffer number
 -- @param args_string string  space-separated options: deep, i, r, flip, shuffle
 function M.sort(body_buf, args_string)
+  -- Accept either tree or body buffer.
+  if state.is_tree(body_buf) then
+    body_buf = state.get_body(body_buf)
+  end
   if not state.is_body(body_buf) then return end
   local outline = state.get_outline(body_buf)
   if not outline then return end
@@ -1111,7 +1115,11 @@ function M.sort(body_buf, args_string)
   end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  if tlnum == 1 then return end
+  -- When root is selected, sort its top-level children.
+  if tlnum == 1 then
+    tlnum = tree.find_first_child_lnum(levels, 1)
+    if not tlnum then return end
+  end
 
   -- Find the parent to identify the sibling group to sort.
   local parent_tlnum = tree.find_parent_lnum(levels, tlnum)
