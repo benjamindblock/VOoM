@@ -35,10 +35,10 @@ local clipboard = {
 
 -- Return the body line range (bln1, bln2) for a node and its entire subtree.
 --
--- `tlnum` is a tree line number (1-indexed, root = 1).  For heading nodes
--- (tlnum >= 2), we look up the bnode and walk forward through levels to find
--- the end of the subtree (first node at same or shallower level, or end of
--- document).
+-- `tlnum` is a tree line number (1-indexed).  Tree line k maps directly to
+-- bnodes[k] and levels[k] — no offset.  We look up the bnode and walk
+-- forward through levels to find the end of the subtree (first node at same
+-- or shallower level, or end of document).
 --
 -- @param bnodes          table  1-indexed bnode array
 -- @param levels          table  1-indexed levels array
@@ -46,11 +46,7 @@ local clipboard = {
 -- @param total_body_lines int   total number of body lines
 -- @return int, int  (bln1, bln2) inclusive body line range
 function M.get_node_range(bnodes, levels, tlnum, total_body_lines)
-  if tlnum == 1 then
-    return 1, total_body_lines
-  end
-
-  local idx = tlnum - 1 -- levels/bnodes index for this node
+  local idx = tlnum -- levels/bnodes index = tree line (direct mapping)
   local bln1 = bnodes[idx]
   local cur_level = levels[idx]
 
@@ -71,11 +67,10 @@ end
 -- Port of nodeSubnodes() in voom_vim.py.
 --
 -- @param levels  table  1-indexed levels array
--- @param tlnum   int    tree line number (must be >= 2)
+-- @param tlnum   int    tree line number
 -- @return int    number of subnodes (0 if leaf or last node)
 function M.count_subnodes(levels, tlnum)
-  if tlnum == 1 then return #levels end
-  local idx = tlnum - 1
+  local idx = tlnum  -- direct mapping: tree line k = levels[k]
   if idx >= #levels then return 0 end
 
   local cur_level = levels[idx]
@@ -148,10 +143,8 @@ function M.edit_node(tree_buf, op)
   if not tree_win then return end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  -- No-op on root node.
-  if tlnum == 1 then return end
 
-  local idx = tlnum - 1
+  local idx = tlnum  -- tree line k = bnodes[k] / levels[k] (direct mapping)
   local body_lnum
 
   if op == "i" then
@@ -208,22 +201,15 @@ function M.insert_node(tree_buf, as_child)
   local total_body = vim.api.nvim_buf_line_count(body_buf)
 
   -- Determine the insert level and the tree line after which to insert.
-  local lev
-  if ln == 1 then
-    -- After root: insert at level 1.
-    lev = 1
-  else
-    lev = levels[ln - 1]
-  end
+  -- Tree line k maps directly to levels[k]; no root-offset needed.
+  local lev = levels[ln]
 
   if as_child then
     -- Always insert as first child, regardless of fold state.
-    if ln ~= 1 then
-      lev = lev + 1
-    end
-  elseif ln ~= 1 and ln ~= #levels then
+    lev = lev + 1
+  elseif ln ~= #levels then
     -- Node has children — check fold state.
-    if levels[ln] and lev < levels[ln] then
+    if levels[ln + 1] and lev < levels[ln + 1] then
       -- Check if folded in the tree window.
       local fold_end = vim.api.nvim_win_call(tree_win, function()
         return vim.fn.foldclosedend(ln)
@@ -280,7 +266,8 @@ function M.insert_node(tree_buf, as_child)
   if new_outline then
     for i, bn in ipairs(new_outline.bnodes) do
       if bn == new_bln then
-        local new_tlnum = i + 1
+        -- Direct mapping: tree line = bnodes index (no root offset).
+        local new_tlnum = i
         state.set_snLn(body_buf, new_tlnum)
         if tree_win and vim.api.nvim_win_is_valid(tree_win) then
           vim.api.nvim_win_set_cursor(tree_win, { new_tlnum, 0 })
@@ -324,18 +311,12 @@ function M.copy_node(tree_buf)
   local body_lines = vim.api.nvim_buf_get_lines(body_buf, bln1 - 1, bln2, false)
 
   -- Collect the levels for nodes in this subtree.
+  -- Tree line k = levels[k] (direct mapping; no root offset).
   local copied_levels = {}
-  if tlnum == 1 then
-    -- Copying from root = copy all levels.
-    for i = 1, #outline.levels do
-      table.insert(copied_levels, outline.levels[i])
-    end
-  else
-    local idx = tlnum - 1
-    local sub_count = M.count_subnodes(outline.levels, tlnum)
-    for i = idx, idx + sub_count do
-      table.insert(copied_levels, outline.levels[i])
-    end
+  local idx = tlnum
+  local sub_count = M.count_subnodes(outline.levels, tlnum)
+  for i = idx, idx + sub_count do
+    table.insert(copied_levels, outline.levels[i])
   end
 
   clipboard = {
@@ -369,15 +350,14 @@ function M.cut_node(tree_buf)
   if not tree_win then return end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  -- Cannot cut the root node.
-  if tlnum == 1 then return end
 
   local bnodes = outline.bnodes
   local levels = outline.levels
   local total_body = vim.api.nvim_buf_line_count(body_buf)
 
   -- Compute the tree line range for the subtree being cut.
-  local ln1 = tlnum - 1 -- levels/bnodes index of first node
+  -- Tree line k = levels[k] / bnodes[k] (direct mapping; no root offset).
+  local ln1 = tlnum -- levels/bnodes index of first node
   local sub_count = M.count_subnodes(levels, tlnum)
   local ln2 = ln1 + sub_count -- levels/bnodes index of last node in subtree
 
@@ -451,7 +431,7 @@ function M.cut_node(tree_buf)
   -- Clamp to valid range after refresh.
   local new_outline = state.get_outline(body_buf)
   if new_outline then
-    local max_tlnum = #new_outline.bnodes + 1
+    local max_tlnum = #new_outline.bnodes
     if target_tlnum > max_tlnum then target_tlnum = max_tlnum end
   end
 
@@ -622,10 +602,11 @@ function M.paste_node(tree_buf)
   refresh_after_edit(body_buf)
 
   -- Position cursor on the first pasted node.
-  local new_tlnum = tlnum1 + 1 -- tree line = bnodes index + 1
+  -- tlnum1 is already a direct tree line (bnodes index = tree line; no root offset).
+  local new_tlnum = tlnum1
   local new_outline = state.get_outline(body_buf)
   if new_outline then
-    local max_tlnum = #new_outline.bnodes + 1
+    local max_tlnum = #new_outline.bnodes
     if new_tlnum > max_tlnum then new_tlnum = max_tlnum end
   end
 
@@ -655,7 +636,7 @@ function M.move_up(tree_buf)
   if not tree_win then return end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  if tlnum <= 1 then return end
+  if tlnum < 1 then return end  -- cursor is always >=1; guard against impossible state
 
   local bnodes = outline.bnodes
   local levels = outline.levels
@@ -665,12 +646,13 @@ function M.move_up(tree_buf)
   local prev_sib = tree.find_prev_sibling_lnum(levels, tlnum)
   if not prev_sib then return end
 
-  local ln1 = tlnum - 1 -- bnodes index of first node being moved
+  -- Tree line k = bnodes[k] / levels[k] (direct mapping; no root offset).
+  local ln1 = tlnum -- bnodes index of first node being moved
   local sub_count = M.count_subnodes(levels, tlnum)
   local ln2 = ln1 + sub_count -- bnodes index of last node in subtree
 
-  -- lnUp1: previous sibling root (bnodes index).
-  local lnUp1 = prev_sib - 1 -- bnodes index
+  -- lnUp1: previous sibling root (bnodes index, direct = tree line).
+  local lnUp1 = prev_sib
 
   -- Compute level delta.
   -- Move-up swaps sibling branches, so the moved root should take the previous
@@ -761,8 +743,8 @@ function M.move_up(tree_buf)
   write_body(body_buf, all_lines)
   refresh_after_edit(body_buf)
 
-  -- Position cursor: the moved node is now at tree line lnUp1 + 1.
-  local new_tlnum = lnUp1 + 1
+  -- Position cursor: the moved node is now at tree line lnUp1 (direct mapping).
+  local new_tlnum = lnUp1
   state.set_snLn(body_buf, new_tlnum)
   if tree_win and vim.api.nvim_win_is_valid(tree_win) then
     vim.api.nvim_win_set_cursor(tree_win, { new_tlnum, 0 })
@@ -788,7 +770,7 @@ function M.move_down(tree_buf)
   if not tree_win then return end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  if tlnum <= 1 then return end
+  if tlnum < 1 then return end  -- cursor is always >=1; guard against impossible state
 
   local bnodes = outline.bnodes
   local levels = outline.levels
@@ -798,12 +780,13 @@ function M.move_down(tree_buf)
   local next_sib = tree.find_next_sibling_lnum(levels, tlnum)
   if not next_sib then return end
 
-  local ln1 = tlnum - 1 -- bnodes index of first node being moved
+  -- Tree line k = bnodes[k] / levels[k] (direct mapping; no root offset).
+  local ln1 = tlnum -- bnodes index of first node being moved
   local sub_count = M.count_subnodes(levels, tlnum)
   local ln2 = ln1 + sub_count
 
-  -- lnDn1: bnodes index of the sibling after which we move.
-  local lnDn1 = next_sib - 1
+  -- lnDn1: tree line (= bnodes index) of the sibling after which we move.
+  local lnDn1 = next_sib
 
   -- Compute where to insert (after lnDn1's subtree).
   local lnIns = lnDn1
@@ -903,8 +886,8 @@ function M.move_down(tree_buf)
   write_body(body_buf, all_lines)
   refresh_after_edit(body_buf)
 
-  -- Position cursor at new location.
-  local new_tlnum = new_snLn_idx + 1
+  -- Position cursor at new location (new_snLn_idx is already a tree line).
+  local new_tlnum = new_snLn_idx
   state.set_snLn(body_buf, new_tlnum)
   if tree_win and vim.api.nvim_win_is_valid(tree_win) then
     vim.api.nvim_win_set_cursor(tree_win, { new_tlnum, 0 })
@@ -930,13 +913,14 @@ function M.promote(tree_buf)
   if not tree_win then return end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  if tlnum <= 1 then return end
+  if tlnum < 1 then return end  -- cursor is always >=1; guard against impossible state
 
   local bnodes = outline.bnodes
   local levels = outline.levels
   local total_body = vim.api.nvim_buf_line_count(body_buf)
 
-  local ln1 = tlnum - 1
+  -- Tree line k = bnodes[k] / levels[k] (direct mapping; no root offset).
+  local ln1 = tlnum
   local ln2 = ln1
 
   -- Check: cannot promote if any node in the range is already at level 1.
@@ -1010,18 +994,18 @@ function M.demote(tree_buf)
   if not tree_win then return end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  if tlnum <= 1 then return end
+  if tlnum < 1 then return end  -- cursor is always >=1; guard against impossible state
 
   local bnodes = outline.bnodes
   local levels = outline.levels
   local total_body = vim.api.nvim_buf_line_count(body_buf)
 
-  local ln1 = tlnum - 1
+  -- Tree line k = bnodes[k] / levels[k] (direct mapping; no root offset).
+  local ln1 = tlnum
   local ln2 = ln1
 
   -- Check: cannot demote if it's already a child of the preceding node.
-  -- The legacy code checks: levels[ln1-1] > levels[ln1-2], meaning the node
-  -- is already deeper than its predecessor.
+  -- levels[ln1] = level of current node; levels[ln1-1] = level of previous node.
   if ln1 > 1 and levels[ln1] > levels[ln1 - 1] then
     vim.api.nvim_echo(
       { { "VOoM: cannot demote — already a child of previous node", "WarningMsg" } },
@@ -1115,11 +1099,6 @@ function M.sort(body_buf, args_string)
   end
 
   local tlnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  -- When root is selected, sort its top-level children.
-  if tlnum == 1 then
-    tlnum = tree.find_first_child_lnum(levels, 1)
-    if not tlnum then return end
-  end
 
   -- Find the parent to identify the sibling group to sort.
   local parent_tlnum = tree.find_parent_lnum(levels, tlnum)
@@ -1127,10 +1106,11 @@ function M.sort(body_buf, args_string)
   local last_sib = tree.find_last_sibling_lnum(levels, tlnum)
 
   -- Collect sibling chunks: each sibling + its subtree is one chunk.
+  -- Tree line k = bnodes[k] / levels[k] (direct mapping; no root offset).
   local chunks = {} -- { { tlnum_start, tlnum_end, bln1, bln2, sort_key, body_lines } }
   local sib = first_sib
   while sib do
-    local sib_idx = sib - 1
+    local sib_idx = sib  -- direct mapping: tree line = bnodes/levels index
     local sub_count = M.count_subnodes(levels, sib)
     local sib_end = sib_idx + sub_count -- last bnodes index in this branch
 

@@ -10,12 +10,6 @@
 --   do_body_after_oop(lines, bnodes, levels, outline_state, oop, lev_delta,
 --                     blnum1, tlnum1, blnum2, tlnum2, blnum_cut, tlnum_cut)
 --                                             → b_delta (net line-count change)
---
--- Root node contract: the Python hook_makeOutline did NOT prepend a root node
--- (the buffer name at level 1, bnode 1). The caller in voom.py injected it
--- separately. make_outline follows the same contract: callers are responsible
--- for prepending the root node when building the full tree.
-
 local M = {}
 
 -- Maps heading level (int) -> underline character, for the two underline-style

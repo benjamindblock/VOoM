@@ -257,9 +257,11 @@ function M.voominfo()
   local snLn       = entry.snLn
   local node_count = #entry.bnodes
 
-  -- Read the heading text for the currently selected node.
-  local headline = "(root)"
-  if snLn > 1 and vim.api.nvim_buf_is_valid(tree_buf) then
+  -- Read the heading text for the currently selected node.  Tree line 1 is
+  -- the first real heading (there is no synthetic root node), so we read from
+  -- snLn unconditionally.
+  local headline = "(unknown)"
+  if vim.api.nvim_buf_is_valid(tree_buf) then
     local raw = vim.api.nvim_buf_get_lines(tree_buf, snLn - 1, snLn, false)[1] or ""
     headline = raw:match(".*· (.+)$") or "(unknown)"
   end

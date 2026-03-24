@@ -44,10 +44,10 @@ T["apply_fold_indicators"] = MiniTest.new_set({
     pre_case = function()
       local state = require("voom.state")
       -- Outline: 4 headings at levels [1, 2, 2, 1].
-      --   tree line 2 → levels[1]=1 (has child at levels[2]=2) → parent
-      --   tree line 3 → levels[2]=2 (next is levels[3]=2, same level)  → leaf
-      --   tree line 4 → levels[3]=2 (next is levels[4]=1, shallower)   → leaf
-      --   tree line 5 → levels[4]=1 (no next entry)                    → leaf
+      --   tree line 1 → levels[1]=1 (has child at levels[2]=2) → parent
+      --   tree line 2 → levels[2]=2 (next is levels[3]=2, same level)  → leaf
+      --   tree line 3 → levels[3]=2 (next is levels[4]=1, shallower)   → leaf
+      --   tree line 4 → levels[4]=1 (no next entry)                    → leaf
       local outline = {
         bnodes = { 1, 5, 10, 20 },
         levels = { 1, 2, 2, 1 },
@@ -59,9 +59,8 @@ T["apply_fold_indicators"] = MiniTest.new_set({
         },
       }
       local body_buf = make_scratch_buf()
-      -- Tree buf holds the actual display lines (root line + 4 heading lines).
+      -- Tree buf holds the actual display lines (4 heading lines; no root node).
       local tree_lines = {
-        " \xe2\x80\xa2 README.md", -- root: " • README.md"
         " · Heading One",
         " · · Child A",
         " · · Child B",
@@ -96,23 +95,10 @@ T["apply_fold_indicators"]["places extmarks on all heading lines"] = function()
 
   tree.apply_fold_indicators(tree_buf, body_buf)
 
-  -- Lines 2–5 (0-indexed rows 1–4) should each have an extmark.
+  -- Lines 1–4 (0-indexed rows 0–3) should each have an extmark.
   local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
   local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
   MiniTest.expect.equality(#marks, 4)
-end
-
-T["apply_fold_indicators"]["line 1 (root) has no extmark"] = function()
-  local tree = require("voom.tree")
-  local tree_buf = T["apply_fold_indicators"]._tree
-  local body_buf = T["apply_fold_indicators"]._body
-
-  tree.apply_fold_indicators(tree_buf, body_buf)
-
-  local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
-  -- Row 0 = tree line 1 (root).  No marks should be on that row.
-  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {})
-  MiniTest.expect.equality(#marks, 0)
 end
 
 T["apply_fold_indicators"]["parent node gets open icon (▾) when unfolded"] = function()
@@ -123,9 +109,9 @@ T["apply_fold_indicators"]["parent node gets open icon (▾) when unfolded"] = f
   tree.apply_fold_indicators(tree_buf, body_buf)
 
   local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
-  -- tree line 2 (row 1) is "Heading One" — levels[1]=1 with child levels[2]=2.
+  -- tree line 1 (row 0) is "Heading One" — levels[1]=1 with child levels[2]=2.
   -- foldclosed returns -1 (no manual fold), so it should show ▾.
-  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 1, 0 }, { 1, -1 }, {
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {
     details = true,
   })
   MiniTest.expect.equality(#marks, 1)
@@ -142,8 +128,8 @@ T["apply_fold_indicators"]["leaf node gets leaf icon (·)"] = function()
   tree.apply_fold_indicators(tree_buf, body_buf)
 
   local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
-  -- tree line 3 (row 2): "Child A" — levels[2]=2, levels[3]=2 (same), so leaf.
-  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 2, 0 }, { 2, -1 }, {
+  -- tree line 2 (row 1): "Child A" — levels[2]=2, levels[3]=2 (same), so leaf.
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 1, 0 }, { 1, -1 }, {
     details = true,
   })
   MiniTest.expect.equality(#marks, 1)
@@ -160,8 +146,8 @@ T["apply_fold_indicators"]["last node is always a leaf (·)"] = function()
   tree.apply_fold_indicators(tree_buf, body_buf)
 
   local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
-  -- tree line 5 (row 4): "Heading Two" — levels[4]=1, levels[5]=nil → leaf.
-  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 4, 0 }, { 4, -1 }, {
+  -- tree line 4 (row 3): "Heading Two" — levels[4]=1, levels[5]=nil → leaf.
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 3, 0 }, { 3, -1 }, {
     details = true,
   })
   MiniTest.expect.equality(#marks, 1)
@@ -178,11 +164,11 @@ T["apply_fold_indicators"]["icon column matches heading level indentation"] = fu
 
   local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
   -- Level-1 heading: col = 1 + (1-1)*2 = 1
-  local marks_lev1 = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 1, 0 }, { 1, -1 }, {})
+  local marks_lev1 = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {})
   MiniTest.expect.equality(marks_lev1[1][3], 1)
 
   -- Level-2 heading: col = 1 + (2-1)*3 = 4
-  local marks_lev2 = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 2, 0 }, { 2, -1 }, {})
+  local marks_lev2 = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 1, 0 }, { 1, -1 }, {})
   MiniTest.expect.equality(marks_lev2[1][3], 4)
 end
 
@@ -257,7 +243,7 @@ T["update applies fold indicators"]["extmarks present after create"] = function(
   local tree_buf = T["update applies fold indicators"]._tree
   local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
   local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
-  -- 3 headings → 3 extmarks (root line has none).
+  -- 3 headings → 3 extmarks.
   MiniTest.expect.equality(#marks, 3)
 end
 

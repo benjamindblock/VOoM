@@ -9,18 +9,12 @@
 --   - auto-refresh when the body is saved or re-entered after edits
 --
 -- The tree buffer is a scratch/nofile buffer.  Its lines have the format:
---   Line 1 : root node  →  " • {filename}"
---   Line k  : heading    →  " [· ]*· {heading_text}"   (from mode.tlines)
+--   Line k : heading → " [· ]*· {heading_text}"   (from mode.tlines)
 --
--- Index mapping (root node at line 1 occupies the slot Python's caller
--- injected separately; headings start at tree line 2):
---   tree line 1       → body line 1
---   tree line k (k≥2) → bnodes[k - 1]
---
--- The levels/bnodes arrays stored in state are 1-indexed parallel arrays
--- where index i corresponds to tree line i+1:
+-- Index mapping: tree line k ↔ bnodes[k] / levels[k] (direct 1:1).
+-- The levels/bnodes arrays stored in state are 1-indexed parallel arrays:
 --   levels[i]  = heading depth (1–6)
---   bnodes[i]  = body line number of the heading
+--   bnodes[i]  = body line number of heading i
 
 local M = {}
 
@@ -73,23 +67,10 @@ local function write_lines(buf, lines)
   vim.api.nvim_buf_set_option(buf, "modifiable", false)
 end
 
--- Build the full list of tree display lines from outline data.
--- Prepends the root node at position 1.
-local function build_tree_lines(buf_name, outline)
-  local tail = vim.fn.fnamemodify(buf_name, ":t")
-  if tail == "" then
-    -- Unnamed or scratch buffer: fall back to the raw name.
-    tail = buf_name ~= "" and buf_name or "[No Name]"
-  end
-  -- Use "•" instead of "|" to visually distinguish the root node from
-  -- level-1 headings, which also begin with "  |".  Without this, the root
-  -- looks like a peer of its children and implies it can be navigated with
-  -- J/K the way headings can.
-  local lines = { " • " .. tail }
-  for _, tl in ipairs(outline.tlines) do
-    table.insert(lines, tl)
-  end
-  return lines
+-- Return the list of tree display lines from outline data.
+-- The winbar now carries the filename, so the tree is a pure heading list.
+local function build_tree_lines(outline)
+  return outline.tlines
 end
 
 -- Extract the heading text that appears after the '|' separator in a tree
@@ -166,12 +147,14 @@ function M.apply_fold_indicators(tree_buf, body_buf)
   local n_lines = vim.api.nvim_buf_line_count(tree_buf)
   local icons   = cfg.icons
 
-  -- Line 1 is the root node (•filename) — no icon overlay needed there.
-  for lnum = 2, n_lines do
-    local idx = lnum - 1   -- 1-based index into levels[]
+  -- Every tree line is a heading; tree line k ↔ levels[k].
+  -- Use n_nodes (not n_lines) to guard against the empty-buffer edge case
+  -- where Neovim reports 1 line even when the tree has no headings yet.
+  for lnum = 1, n_nodes do
+    local idx = lnum   -- 1-based index into levels[]
 
-    -- A node has children when the next entry in levels[] is strictly deeper.
-    -- The last node always has nil at idx+1, making it a leaf by definition.
+    -- A node has children when the immediately following entry in levels[] is
+    -- strictly deeper.  The last node always has nil at idx+1 → leaf.
     local has_children = (levels[idx + 1] ~= nil)
       and (levels[idx + 1] > levels[idx])
 
@@ -313,12 +296,13 @@ local function run_structural_action_with_history(tree_buf, fn)
 end
 
 -- Given sorted heading start lines (`bnodes`) and a body cursor line, return
--- the owning tree line number (root=1 when cursor is above the first heading).
+-- the owning tree line number.  Returns 1 (first heading) when the cursor is
+-- above all headings — a reasonable fallback for preamble content.
 local function tree_lnum_for_body_line(bnodes, cursor_line)
   local target_tree_lnum = 1
   for i = #bnodes, 1, -1 do
     if bnodes[i] <= cursor_line then
-      target_tree_lnum = i + 1
+      target_tree_lnum = i   -- direct 1:1 mapping; no +1 offset for root
       break
     end
   end
@@ -338,17 +322,11 @@ function M.navigate_to_body(tree_buf, tree_lnum)
   local body_buf = state.get_body(tree_buf)
   if not body_buf then return end
 
-  -- Determine target body line number.  Line 1 is the root node and maps
-  -- to the first line of the body; lines ≥ 2 index into bnodes.
-  local body_lnum
-  if tree_lnum == 1 then
-    body_lnum = 1
-  else
-    local outline = state.get_outline(body_buf)
-    if not outline then return end
-    body_lnum = outline.bnodes[tree_lnum - 1]
-    if not body_lnum then return end
-  end
+  -- Tree line k maps directly to bnodes[k].
+  local outline = state.get_outline(body_buf)
+  if not outline then return end
+  local body_lnum = outline.bnodes[tree_lnum]
+  if not body_lnum then return end
 
   state.set_snLn(body_buf, tree_lnum)
 
@@ -370,16 +348,11 @@ function M.follow_cursor(tree_buf, tree_lnum)
   local body_buf = state.get_body(tree_buf)
   if not body_buf then return end
 
-  -- Same bnode lookup as navigate_to_body.
-  local body_lnum
-  if tree_lnum == 1 then
-    body_lnum = 1
-  else
-    local outline = state.get_outline(body_buf)
-    if not outline then return end
-    body_lnum = outline.bnodes[tree_lnum - 1]
-    if not body_lnum then return end
-  end
+  -- Same bnode lookup as navigate_to_body: tree line k → bnodes[k].
+  local outline = state.get_outline(body_buf)
+  if not outline then return end
+  local body_lnum = outline.bnodes[tree_lnum]
+  if not body_lnum then return end
 
   -- Outline data can be stale temporarily (for example, when the body changed
   -- but the tree has not yet rebuilt).  Clamp to a valid body line so cursor
@@ -409,48 +382,38 @@ end
 -- ==============================================================================
 --
 -- These functions operate on the `levels` array from state (1-indexed, where
--- levels[i] is the depth of tree line i+1).  They return tree line numbers
--- (1-based, root = 1).  All are exposed on M so tests can call them directly
--- without needing a live Neovim window.
+-- levels[i] is the depth of tree line i — direct 1:1 mapping).  They return
+-- tree line numbers (1-based).  All are exposed on M so tests can call them
+-- directly without needing a live Neovim window.
 
--- Return the tree line number of the parent of `tree_lnum`.
--- Returns 1 (root) when tree_lnum is 1 or a direct child of root (level 1).
+-- Return the tree line number of the parent of `tree_lnum`, or nil if the
+-- node is already at the top level (level 1 heading with no ancestor).
 --
 -- We walk backward from tree_lnum−1, looking for the first node whose level
 -- is strictly less than the current node's level — that node is the parent.
--- If no such ancestor exists, the node is a top-level heading; its parent
--- is the root (line 1).
 function M.find_parent_lnum(levels, tree_lnum)
-  -- The root and its immediate children have no parent above root.
-  if tree_lnum <= 2 then return 1 end
+  if tree_lnum <= 1 then return nil end     -- nothing above the first line
 
-  local cur_level = levels[tree_lnum - 1]  -- levels index = tree_lnum - 1
+  local cur_level = levels[tree_lnum]       -- levels[i] = depth of tree line i
 
-  for i = tree_lnum - 2, 1, -1 do           -- walk backward through levels[]
+  for i = tree_lnum - 1, 1, -1 do          -- walk backward through levels[]
     if levels[i] < cur_level then
-      return i + 1                           -- tree line = levels index + 1
+      return i                              -- tree line = levels index (direct)
     end
   end
 
   -- No ancestor found with a lower level: node is already at the top depth.
-  return 1
+  return nil
 end
 
 -- Return the tree line number of the first child of `tree_lnum`, or nil if
 -- this node is a leaf.
 --
--- A child exists when the very next slot in levels[] has a deeper level than
--- the current node.  For the root (tree_lnum == 1), any first heading is a
--- child.
+-- A child exists when the very next slot in levels[] has a deeper level.
 function M.find_first_child_lnum(levels, tree_lnum)
-  if tree_lnum == 1 then
-    -- Root: first child is tree line 2, if any headings exist.
-    return (#levels >= 1) and 2 or nil
-  end
-
-  -- levels[tree_lnum] is the next slot (tree line tree_lnum+1).
-  local next_level = levels[tree_lnum]      -- may be nil at end of array
-  if next_level and next_level > levels[tree_lnum - 1] then
+  -- levels[tree_lnum + 1] is the next slot (tree line tree_lnum+1).
+  local next_level = levels[tree_lnum + 1]   -- may be nil at end of array
+  if next_level and next_level > levels[tree_lnum] then
     return tree_lnum + 1
   end
   return nil
@@ -465,16 +428,15 @@ end
 function M.find_prev_sibling_lnum(levels, tree_lnum)
   if tree_lnum <= 1 then return nil end
 
-  -- Root (tree_lnum == 1) has no siblings; level-1 nodes walk against root.
-  local cur_level = levels[tree_lnum - 1]
+  local cur_level = levels[tree_lnum]       -- levels[i] = depth of tree line i
 
-  for i = tree_lnum - 2, 1, -1 do
+  for i = tree_lnum - 1, 1, -1 do
     local lv = levels[i]
     if lv < cur_level then
       -- Reached the parent without finding a same-level sibling.
       return nil
     elseif lv == cur_level then
-      return i + 1                           -- tree line = index + 1
+      return i                              -- tree line = index (direct)
     end
     -- lv > cur_level: a deeper node in a sibling subtree; keep searching.
   end
@@ -488,16 +450,15 @@ end
 -- Walk forward from tree_lnum+1.  First node at the same depth is the next
 -- sibling; first node at shallower depth means we exited the parent, so nil.
 function M.find_next_sibling_lnum(levels, tree_lnum)
-  if tree_lnum == 1 then return nil end      -- root has no siblings
+  local cur_level = levels[tree_lnum]
+  if not cur_level then return nil end      -- out of range
 
-  local cur_level = levels[tree_lnum - 1]
-
-  for i = tree_lnum, #levels do             -- levels[i] = tree line i+1
+  for i = tree_lnum + 1, #levels do        -- levels[i] = tree line i (direct)
     local lv = levels[i]
     if lv < cur_level then
       return nil
     elseif lv == cur_level then
-      return i + 1
+      return i
     end
     -- lv > cur_level: still inside a child subtree; continue forward.
   end
@@ -533,19 +494,17 @@ end
 --
 -- Returns a ">"-separated chain of ancestor heading texts from the outermost
 -- to the innermost, e.g. "Introduction > Background > Motivation".
--- Returns "" for the root node (tree_lnum == 1).
+-- Returns "" when tree_lnum is nil or the tree is empty.
 --
--- We collect the heading text of the target node, then walk up through
--- ancestors via find_parent_lnum until we reach the root (lnum == 1), which
--- we do NOT include (it is the filename, not a real heading).
+-- Walk up via find_parent_lnum (returns nil at the top level) collecting
+-- heading text until there are no more ancestors.
 function M.build_unl(tree_buf, levels, tree_lnum)
-  if tree_lnum == 1 then return "" end
+  if not tree_lnum or not levels[tree_lnum] then return "" end
 
   local parts = {}
 
-  -- Read heading texts as we walk up to the root.
   local lnum = tree_lnum
-  while lnum > 1 do
+  while lnum ~= nil do
     local line = vim.api.nvim_buf_get_lines(tree_buf, lnum - 1, lnum, false)[1] or ""
     table.insert(parts, 1, heading_text_from_tree_line(line))
     lnum = M.find_parent_lnum(levels, lnum)
@@ -564,19 +523,12 @@ end
 -- foldexpr string set on the tree window.  It mirrors the legacy
 -- `voom#TreeFoldexpr` from the original Vimscript plugin.
 --
--- The tree uses a simple depth-based fold structure:
---   - Line 1 (root node) opens a fold at depth 1 that contains all headings.
---   - Each heading line opens a fold at depth equal to its heading level,
---     which naturally nests children inside their parents.
+-- Every tree line is a heading.  Line k opens a fold at depth equal to its
+-- heading level, naturally nesting children inside their parents.
 --
 -- Returns "0" when state is unavailable (e.g. during buffer construction
 -- before the outline has been registered).
 function M.tree_foldexpr(lnum)
-  -- The root line always opens a top-level fold.
-  if lnum == 1 then return ">1" end
-
-  -- For heading lines, look up the body buffer associated with the calling
-  -- tree buffer, then read its outline levels.
   local tree_buf = vim.api.nvim_get_current_buf()
   local body_buf = state.get_body(tree_buf)
   if not body_buf then return "0" end
@@ -584,8 +536,8 @@ function M.tree_foldexpr(lnum)
   local outline = state.get_outline(body_buf)
   if not outline then return "0" end
 
-  -- levels[] is 1-indexed; tree line k corresponds to levels[k-1].
-  local lev = outline.levels[lnum - 1]
+  -- levels[i] = depth of tree line i (direct 1:1 mapping; no offset).
+  local lev = outline.levels[lnum]
   if not lev then return "0" end
 
   return ">" .. lev
@@ -616,7 +568,9 @@ function M.tree_navigate_left(tree_buf)
   pcall(function() vim.api.nvim_win_call(tree_win, function() vim.cmd("normal! zc") end) end)
 
   local target = M.find_parent_lnum(outline.levels, tree_lnum)
-  vim.api.nvim_win_set_cursor(tree_win, { target, 0 })
+  if target then
+    vim.api.nvim_win_set_cursor(tree_win, { target, 0 })
+  end
   M.apply_fold_indicators(tree_buf, body_buf)
 end
 
@@ -783,8 +737,6 @@ function M.tree_contract_siblings(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  -- Root has no siblings.
-  if tree_lnum == 1 then return end
 
   -- OOP edits rewrite tree lines; refresh fold metadata before issuing zc.
   pcall(function()
@@ -796,8 +748,8 @@ function M.tree_contract_siblings(tree_buf)
   local levels = outline.levels
   local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
   while lnum do
-    local idx = lnum - 1
-    local has_children = (levels[idx + 1] ~= nil) and (levels[idx + 1] > levels[idx])
+    -- levels[lnum] = depth of this node; levels[lnum+1] = depth of next.
+    local has_children = (levels[lnum + 1] ~= nil) and (levels[lnum + 1] > levels[lnum])
     pcall(function()
       if has_children then
         vim.api.nvim_win_call(tree_win, function()
@@ -826,8 +778,6 @@ function M.tree_expand_siblings(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  -- Root has no siblings.
-  if tree_lnum == 1 then return end
 
   -- OOP edits rewrite tree lines; refresh fold metadata before issuing zo.
   pcall(function()
@@ -839,8 +789,7 @@ function M.tree_expand_siblings(tree_buf)
   local levels = outline.levels
   local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
   while lnum do
-    local idx = lnum - 1
-    local has_children = (levels[idx + 1] ~= nil) and (levels[idx + 1] > levels[idx])
+    local has_children = (levels[lnum + 1] ~= nil) and (levels[lnum + 1] > levels[lnum])
     pcall(function()
       if has_children then
         vim.api.nvim_win_call(tree_win, function()
@@ -1360,8 +1309,8 @@ function M.create(body_buf, mode_name)
   local lines    = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
   local outline  = mode.make_outline(lines, buf_name)
 
-  -- Build the display line list (root node at index 1).
-  local tree_lines = build_tree_lines(buf_name, outline)
+  -- Build the display line list (headings only; filename lives in the winbar).
+  local tree_lines = build_tree_lines(outline)
 
   -- Create the scratch buffer that will hold the tree display.
   local tree_buf = vim.api.nvim_create_buf(false, true)
@@ -1446,7 +1395,7 @@ function M.update(body_buf)
   local lines    = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
   local outline  = mode.make_outline(lines, buf_name)
 
-  local tree_lines = build_tree_lines(buf_name, outline)
+  local tree_lines = build_tree_lines(outline)
   write_lines(entry.tree, tree_lines)
   state.set_outline(body_buf, outline)
   state.set_changedtick(body_buf, vim.api.nvim_buf_get_changedtick(body_buf))
