@@ -67,7 +67,7 @@ saved, and also when you re-enter the body after an out-of-band edit.
 | `<CR>`         | Jump to the heading under the cursor in the body    |
 | `<Tab>`        | Switch focus to the body window                     |
 | `<Left>` / `P` | Move cursor to the parent heading                   |
-| `<Right>` / `o`| Move cursor to the first child heading              |
+| `<Right>` / `o`| Open/reveal current node if needed, then move to first child heading |
 | `K`            | Move cursor to the previous sibling heading         |
 | `J`            | Move cursor to the next sibling heading             |
 | `U`            | Move cursor to the first (topmost) sibling heading  |

@@ -503,10 +503,21 @@ function M.tree_navigate_right(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
+  -- Match legacy VOoM behavior: when the current node is closed, first reveal
+  -- it, then descend to the first child.
+  pcall(function()
+    vim.api.nvim_win_call(tree_win, function()
+      if vim.fn.foldclosed(tree_lnum) == tree_lnum then
+        vim.cmd("normal! zv")
+      end
+    end)
+  end)
+
   local target = M.find_first_child_lnum(outline.levels, tree_lnum)
   if target then
     vim.api.nvim_win_set_cursor(tree_win, { target, 0 })
   end
+  M.apply_fold_indicators(tree_buf, body_buf)
 end
 
 -- Move to the previous sibling.
@@ -644,17 +655,33 @@ function M.tree_contract_siblings(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  local first = M.find_first_sibling_lnum(outline.levels, tree_lnum)
-  local last  = M.find_last_sibling_lnum(outline.levels, tree_lnum)
+  -- Root has no siblings.
+  if tree_lnum == 1 then return end
 
-  for lnum = first, last do
-    pcall(function()
-      vim.api.nvim_win_call(tree_win, function()
-        vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
-        vim.cmd("normal! zc")
-      end)
+  -- OOP edits rewrite tree lines; refresh fold metadata before issuing zc.
+  pcall(function()
+    vim.api.nvim_win_call(tree_win, function()
+      vim.cmd("normal! zx")
     end)
+  end)
+
+  local levels = outline.levels
+  local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
+  while lnum do
+    local idx = lnum - 1
+    local has_children = (levels[idx + 1] ~= nil) and (levels[idx + 1] > levels[idx])
+    pcall(function()
+      if has_children then
+        vim.api.nvim_win_call(tree_win, function()
+          vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
+          vim.cmd("normal! zc")
+        end)
+      end
+    end)
+
+    lnum = M.find_next_sibling_lnum(levels, lnum)
   end
+
   -- Restore cursor to original position.
   vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
   M.apply_fold_indicators(tree_buf, body_buf)
@@ -671,17 +698,33 @@ function M.tree_expand_siblings(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  local first = M.find_first_sibling_lnum(outline.levels, tree_lnum)
-  local last  = M.find_last_sibling_lnum(outline.levels, tree_lnum)
+  -- Root has no siblings.
+  if tree_lnum == 1 then return end
 
-  for lnum = first, last do
-    pcall(function()
-      vim.api.nvim_win_call(tree_win, function()
-        vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
-        vim.cmd("normal! zo")
-      end)
+  -- OOP edits rewrite tree lines; refresh fold metadata before issuing zo.
+  pcall(function()
+    vim.api.nvim_win_call(tree_win, function()
+      vim.cmd("normal! zx")
     end)
+  end)
+
+  local levels = outline.levels
+  local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
+  while lnum do
+    local idx = lnum - 1
+    local has_children = (levels[idx + 1] ~= nil) and (levels[idx + 1] > levels[idx])
+    pcall(function()
+      if has_children then
+        vim.api.nvim_win_call(tree_win, function()
+          vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
+          vim.cmd("normal! zo")
+        end)
+      end
+    end)
+
+    lnum = M.find_next_sibling_lnum(levels, lnum)
   end
+
   vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
   M.apply_fold_indicators(tree_buf, body_buf)
 end
@@ -1088,9 +1131,14 @@ function M.create(body_buf, mode_name)
   vim.api.nvim_win_set_buf(tree_win, tree_buf)
   vim.api.nvim_win_set_option(tree_win, "winfixwidth", true)
 
+  -- Register state before configuring folds. foldexpr evaluates through
+  -- state.get_body()/get_outline(); without registration Neovim sees "0" and
+  -- creates no folds on first open.
+  state.register(body_buf, tree_buf, mode_name, outline)
+
   -- Enable expression-based folding so the tree's fold structure mirrors the
-  -- heading hierarchy.  foldlevel=20 starts fully open; users collapse with
-  -- <Space> / C.  conceallevel=0 prevents third-party plugins from concealing
+  -- heading hierarchy. foldlevel=20 starts fully open; users collapse with
+  -- <Space> / C. conceallevel=0 prevents third-party plugins from concealing
   -- the | separator characters.
   vim.wo[tree_win].foldmethod   = "expr"
   vim.wo[tree_win].foldexpr     = "v:lua.require('voom.tree').tree_foldexpr(v:lnum)"
@@ -1098,8 +1146,13 @@ function M.create(body_buf, mode_name)
   vim.wo[tree_win].foldenable   = true
   vim.wo[tree_win].conceallevel = 0
 
-  -- Register state and wire up keymaps + autocommands.
-  state.register(body_buf, tree_buf, mode_name, outline)
+  -- Force one fold recomputation now that foldexpr and state are both ready.
+  -- Without this, first-open trees can remain unfurled until a later redraw.
+  vim.api.nvim_win_call(tree_win, function()
+    vim.cmd("normal! zx")
+  end)
+
+  -- Wire up keymaps + autocommands.
   M.set_keymaps(tree_buf, body_buf)
   M.setup_body_keymaps(body_buf, tree_buf)
   setup_autocommands(body_buf, tree_buf)
@@ -1134,6 +1187,18 @@ function M.update(body_buf)
   local tree_lines = build_tree_lines(buf_name, outline)
   write_lines(entry.tree, tree_lines)
   state.set_outline(body_buf, outline)
+
+  -- Recompute fold structure after line rewrites so fold commands work
+  -- immediately after structural edits (promote/demote/move/etc).
+  local tree_win = find_win_for_buf(entry.tree)
+  if tree_win then
+    pcall(function()
+      vim.api.nvim_win_call(tree_win, function()
+        vim.cmd("normal! zx")
+      end)
+    end)
+  end
+
   M.apply_fold_indicators(entry.tree, body_buf)
 end
 

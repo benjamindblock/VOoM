@@ -33,6 +33,26 @@ local function del_buf(buf)
   end
 end
 
+-- Find a window showing `buf` in the current tabpage.
+local function find_win_for_buf(buf)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      return win
+    end
+  end
+  return nil
+end
+
+local function find_tree_lnum_by_text(tree_buf, text)
+  local lines = vim.api.nvim_buf_get_lines(tree_buf, 0, -1, false)
+  for i, line in ipairs(lines) do
+    if line:find(text, 1, true) then
+      return i
+    end
+  end
+  return nil
+end
+
 -- ==============================================================================
 -- Module loading
 -- ==============================================================================
@@ -233,6 +253,182 @@ T["tree.create"]["registers body and tree in state"] = function()
   MiniTest.expect.equality(state.is_tree(tree_buf), true)
   MiniTest.expect.equality(state.get_tree(body), tree_buf)
   MiniTest.expect.equality(state.get_body(tree_buf), body)
+end
+
+T["tree.create"]["initializes folds on first open"] = function()
+  local tree  = require("voom.tree")
+  local lines = load_fixture("sample.md")
+  local body  = make_scratch_buf(lines, "sample.md")
+  T["tree.create"]._body_buf = body
+
+  local tree_buf = tree.create(body, "markdown")
+  T["tree.create"]._tree_buf = tree_buf
+
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  local foldlevel = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldlevel(2)
+  end)
+  MiniTest.expect.equality(foldlevel > 0, true)
+end
+
+-- ==============================================================================
+-- tree.lua: fold actions
+-- ==============================================================================
+
+T["tree.fold_actions"] = MiniTest.new_set({
+  hooks = {
+    pre_case = function()
+      T["tree.fold_actions"]._body_buf = nil
+      T["tree.fold_actions"]._tree_buf = nil
+    end,
+    post_case = function()
+      local state = require("voom.state")
+      local body  = T["tree.fold_actions"]._body_buf
+      if body and state.is_body(body) then
+        require("voom.tree").close(body)
+      end
+      del_buf(T["tree.fold_actions"]._body_buf)
+    end,
+  },
+})
+
+T["tree.fold_actions"]["tree_toggle_fold closes and reopens current node"] = function()
+  local tree_mod = require("voom.tree")
+  local lines    = load_fixture("sample.md")
+  local body     = make_scratch_buf(lines, "sample.md")
+  T["tree.fold_actions"]._body_buf = body
+
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.fold_actions"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  vim.api.nvim_win_set_cursor(tree_win, { 2, 0 })
+  tree_mod.tree_toggle_fold(tree_buf)
+  local after_close = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(2)
+  end)
+  MiniTest.expect.equality(after_close, 2)
+
+  tree_mod.tree_toggle_fold(tree_buf)
+  local after_open = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(2)
+  end)
+  MiniTest.expect.equality(after_open, -1)
+end
+
+T["tree.fold_actions"]["tree_contract_siblings closes sibling nodes that have children"] = function()
+  local tree_mod = require("voom.tree")
+  local lines    = load_fixture("sample.md")
+  local body     = make_scratch_buf(lines, "sample.md")
+  T["tree.fold_actions"]._body_buf = body
+
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.fold_actions"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  -- "Installation" (line 3) is a level-2 sibling with children.
+  vim.api.nvim_win_set_cursor(tree_win, { 3, 0 })
+  tree_mod.tree_contract_siblings(tree_buf)
+
+  local closed = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(3)
+  end)
+  MiniTest.expect.equality(closed, 3)
+end
+
+T["tree.fold_actions"]["tree_navigate_right opens closed node before descending"] = function()
+  local tree_mod = require("voom.tree")
+  local lines    = load_fixture("sample.md")
+  local body     = make_scratch_buf(lines, "sample.md")
+  T["tree.fold_actions"]._body_buf = body
+
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.fold_actions"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  vim.api.nvim_win_set_cursor(tree_win, { 2, 0 })
+  tree_mod.tree_toggle_fold(tree_buf)
+  local before = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(2)
+  end)
+  MiniTest.expect.equality(before, 2)
+
+  tree_mod.tree_navigate_right(tree_buf)
+  local cursor = vim.api.nvim_win_get_cursor(tree_win)
+  MiniTest.expect.equality(cursor[1], 3)
+
+  local after = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(2)
+  end)
+  MiniTest.expect.equality(after, -1)
+end
+
+T["tree.fold_actions"]["tree_contract_siblings on README Tree pane does not collapse root"] = function()
+  local tree_mod = require("voom.tree")
+  local lines = load_fixture("readme_outline.md")
+  local body = make_scratch_buf(lines, "readme_outline.md")
+  T["tree.fold_actions"]._body_buf = body
+
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.fold_actions"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  local tree_pane_lnum = find_tree_lnum_by_text(tree_buf, "Tree pane")
+  MiniTest.expect.equality(tree_pane_lnum ~= nil, true)
+  vim.api.nvim_win_set_cursor(tree_win, { tree_pane_lnum, 0 })
+
+  tree_mod.tree_contract_siblings(tree_buf)
+
+  local root_closed = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(1)
+  end)
+  MiniTest.expect.equality(root_closed, -1)
+
+  local keymaps_lnum = find_tree_lnum_by_text(tree_buf, "Keymaps — tree pane")
+  MiniTest.expect.equality(keymaps_lnum ~= nil, true)
+  local sibling_closed = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(keymaps_lnum)
+  end)
+  MiniTest.expect.equality(sibling_closed, keymaps_lnum)
+end
+
+T["tree.fold_actions"]["tree_contract_siblings works after promote then demote on SESSION"] = function()
+  local tree_mod = require("voom.tree")
+  local oop = require("voom.oop")
+  local lines = load_fixture("session_outline.md")
+  local body = make_scratch_buf(lines, "session_outline.md")
+  T["tree.fold_actions"]._body_buf = body
+
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.fold_actions"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  local bugs_lnum = find_tree_lnum_by_text(tree_buf, "Bugs / Issues")
+  MiniTest.expect.equality(bugs_lnum ~= nil, true)
+  vim.api.nvim_win_set_cursor(tree_win, { bugs_lnum, 0 })
+  oop.promote(tree_buf)
+
+  local bugs_lnum2 = find_tree_lnum_by_text(tree_buf, "Bugs / Issues")
+  MiniTest.expect.equality(bugs_lnum2 ~= nil, true)
+  vim.api.nvim_win_set_cursor(tree_win, { bugs_lnum2, 0 })
+  oop.demote(tree_buf)
+
+  local root_lnum = find_tree_lnum_by_text(tree_buf, "VOoM Session Notes")
+  MiniTest.expect.equality(root_lnum ~= nil, true)
+  vim.api.nvim_win_set_cursor(tree_win, { root_lnum, 0 })
+
+  tree_mod.tree_contract_siblings(tree_buf)
+  local closed = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(root_lnum)
+  end)
+  MiniTest.expect.equality(closed, root_lnum)
 end
 
 -- ==============================================================================
