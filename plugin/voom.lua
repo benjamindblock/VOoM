@@ -34,3 +34,7 @@ end, { nargs = 1 })
 vim.api.nvim_create_user_command("Voominfo", function()
   require("voom").voominfo()
 end, {})
+
+vim.api.nvim_create_user_command("VoomSort", function(opts)
+  require("voom.oop").sort(vim.api.nvim_get_current_buf(), opts.args)
+end, { nargs = "?" })

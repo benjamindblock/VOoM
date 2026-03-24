@@ -735,14 +735,89 @@ function M.set_keymaps(tree_buf, body_buf)
     callback = function() M.echo_unl(tree_buf) end,
   })
 
+  -- -----------------------------------------------------------------------
+  -- Editing operations (delegate to voom.oop)
+  -- -----------------------------------------------------------------------
+
+  -- Edit node: jump to body at heading start / region end.
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "i", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").edit_node(tree_buf, "i") end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "I", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").edit_node(tree_buf, "I") end,
+  })
+
+  -- Insert new node: aa = sibling, AA = child.
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "aa", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").insert_node(tree_buf, false) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "AA", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").insert_node(tree_buf, true) end,
+  })
+
+  -- Copy / cut / paste.
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "yy", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").copy_node(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "dd", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").cut_node(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "pp", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").paste_node(tree_buf) end,
+  })
+
+  -- Move up / down.
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "^^", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").move_up(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Up>", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").move_up(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "__", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").move_down(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Down>", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").move_down(tree_buf) end,
+  })
+
+  -- Promote / demote.
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "<<", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").promote(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Left>", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").promote(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", ">>", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").demote(tree_buf) end,
+  })
+  vim.api.nvim_buf_set_keymap(tree_buf, "n", "<C-Right>", "", {
+    noremap = true, silent = true,
+    callback = function() require("voom.oop").demote(tree_buf) end,
+  })
+
   -- Disable text-modification keys so the buffer feels truly read-only
   -- even though 'nomodifiable' already prevents changes.
-  -- Note: 's', 'S', 'o', 'O', 'c', 'C', 'D', 'U' are mapped above and
-  -- intentionally excluded from this list.
+  -- Note: keys mapped to editing operations above (i, I, aa, AA, dd, pp, yy)
+  -- are intentionally excluded. Single-key prefixes (a, d, p, y) are not
+  -- disabled because Neovim's keymap resolver waits for the second key, and
+  -- the buffer is nomodifiable anyway.
+  -- 's', 'S', 'o', 'O', 'c', 'C', 'D', 'U' are mapped to navigation above.
   disable_keys(tree_buf, {
-    "i", "I", "a", "A",
     "r", "R", "x", "X",
-    "d", "p",
     "u", "<C-r>",
     "zf", "zF", "zd", "zD",
   })
