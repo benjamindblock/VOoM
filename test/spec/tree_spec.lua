@@ -724,6 +724,78 @@ T["tree.follow_cursor"]["updates snLn in state"] = function()
   MiniTest.expect.equality(state.get_snLn(body), 4)
 end
 
+T["tree.follow_cursor"]["unsaved body edits refresh stale tree before follow"] = function()
+  local tree_mod = require("voom.tree")
+  local state    = require("voom.state")
+  local lines = {
+    "# Root",
+    "",
+    "## Keep",
+    "",
+    "## Gone",
+    "",
+  }
+  local body = make_scratch_buf(lines, "follow_refresh.md")
+  T["tree.follow_cursor"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.follow_cursor"]._tree_buf = tree_buf
+
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  local gone_lnum = find_tree_lnum_by_text(tree_buf, "Gone")
+  MiniTest.expect.equality(gone_lnum ~= nil, true)
+
+  local tick_before = state.get_changedtick(body)
+
+  -- Delete "## Gone" from the body without saving; this leaves tree state stale
+  -- until the next changedtick-driven refresh.
+  vim.api.nvim_buf_set_lines(body, 4, 5, false, {})
+  local tick_after_edit = vim.api.nvim_buf_get_changedtick(body)
+  MiniTest.expect.equality(tick_after_edit ~= tick_before, true)
+
+  vim.api.nvim_set_current_win(tree_win)
+  vim.api.nvim_win_set_cursor(tree_win, { gone_lnum, 0 })
+
+  MiniTest.expect.no_error(function()
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = tree_buf })
+  end)
+
+  -- Tree should have rebuilt from current body content and removed stale node.
+  MiniTest.expect.equality(find_tree_lnum_by_text(tree_buf, "Gone"), nil)
+  MiniTest.expect.equality(state.get_changedtick(body), vim.api.nvim_buf_get_changedtick(body))
+end
+
+T["tree.follow_cursor"]["stale bnode beyond EOF is clamped"] = function()
+  local tree_mod = require("voom.tree")
+  local state    = require("voom.state")
+  local body     = make_scratch_buf({ "# One" }, "follow_clamp.md")
+  T["tree.follow_cursor"]._body_buf = body
+
+  vim.api.nvim_set_current_buf(body)
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.follow_cursor"]._tree_buf = tree_buf
+
+  local body_win = find_win_for_buf(body)
+  MiniTest.expect.equality(body_win ~= nil, true)
+
+  -- Inject stale outline data to emulate a corrupted/stale bnode mapping.
+  state.set_outline(body, {
+    bnodes = { 999 },
+    levels = { 1 },
+    tlines = { " · One" },
+  })
+
+  MiniTest.expect.no_error(function()
+    tree_mod.follow_cursor(tree_buf, 2)
+  end)
+
+  local cursor = vim.api.nvim_win_get_cursor(body_win)
+  MiniTest.expect.equality(cursor[1], 1)
+end
+
 -- ==============================================================================
 -- <Tab> keymap: navigate to heading AND switch focus
 -- ==============================================================================

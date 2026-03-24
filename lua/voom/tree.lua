@@ -260,6 +260,13 @@ function M.follow_cursor(tree_buf, tree_lnum)
     if not body_lnum then return end
   end
 
+  -- Outline data can be stale temporarily (for example, when the body changed
+  -- but the tree has not yet rebuilt).  Clamp to a valid body line so cursor
+  -- updates never throw "Cursor position outside buffer".
+  local body_line_count = vim.api.nvim_buf_line_count(body_buf)
+  if body_line_count < 1 then return end
+  body_lnum = math.max(1, math.min(body_lnum, body_line_count))
+
   state.set_snLn(body_buf, tree_lnum)
 
   -- Scroll the body window to the heading WITHOUT moving focus away from the
@@ -1023,6 +1030,12 @@ end
 -- Autocommands
 -- ==============================================================================
 
+-- Rebuild the tree when the body changed since our last recorded tick.
+local function refresh_tree_if_body_changed(body_buf)
+  local tick = vim.api.nvim_buf_get_changedtick(body_buf)
+  if tick ~= state.get_changedtick(body_buf) then M.update(body_buf) end
+end
+
 -- Attach per-body autocommands.  Each body gets its own named augroup so
 -- that unregistering cleans up cleanly without affecting other bodies.
 local function setup_autocommands(body_buf, tree_buf)
@@ -1046,11 +1059,7 @@ local function setup_autocommands(body_buf, tree_buf)
     group  = aug,
     buffer = body_buf,
     callback = function()
-      local tick = vim.api.nvim_buf_get_changedtick(body_buf)
-      if tick ~= state.get_changedtick(body_buf) then
-        M.update(body_buf)
-        state.set_changedtick(body_buf, tick)
-      end
+      refresh_tree_if_body_changed(body_buf)
     end,
   })
 
@@ -1062,6 +1071,7 @@ local function setup_autocommands(body_buf, tree_buf)
     group  = aug,
     buffer = tree_buf,
     callback = function()
+      refresh_tree_if_body_changed(body_buf)
       local lnum = vim.api.nvim_win_get_cursor(0)[1]
       M.follow_cursor(tree_buf, lnum)
     end,
@@ -1187,6 +1197,7 @@ function M.update(body_buf)
   local tree_lines = build_tree_lines(buf_name, outline)
   write_lines(entry.tree, tree_lines)
   state.set_outline(body_buf, outline)
+  state.set_changedtick(body_buf, vim.api.nvim_buf_get_changedtick(body_buf))
 
   -- Recompute fold structure after line rewrites so fold commands work
   -- immediately after structural edits (promote/demote/move/etc).
