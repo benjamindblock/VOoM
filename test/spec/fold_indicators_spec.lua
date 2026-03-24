@@ -217,4 +217,66 @@ T["apply_fold_indicators"]["returns early when tree_buf is invalid"] = function(
   end)
 end
 
+-- ==============================================================================
+-- Integration: extmarks applied after M.update()
+-- ==============================================================================
+--
+-- Verify that updating the tree (simulating a body save) re-applies fold
+-- indicators so any new or removed headings are covered.
+
+T["update applies fold indicators"] = MiniTest.new_set({
+  hooks = {
+    pre_case = function()
+      -- We need a real displayed buffer for foldclosed() to work, so open
+      -- the body buffer in the current window and let tree.create() split.
+      local lines = {
+        "# Alpha",
+        "content",
+        "## Beta",
+        "more content",
+        "# Gamma",
+      }
+      local body_buf = make_scratch_buf(lines)
+      vim.api.nvim_buf_set_name(body_buf, "update_test.md")
+      vim.api.nvim_set_current_buf(body_buf)
+
+      local tree = require("voom.tree")
+      local tree_buf = tree.create(body_buf, "markdown")
+      T["update applies fold indicators"]._body = body_buf
+      T["update applies fold indicators"]._tree = tree_buf
+    end,
+    post_case = function()
+      local tree = require("voom.tree")
+      tree.close(T["update applies fold indicators"]._body)
+      del_buf(T["update applies fold indicators"]._body)
+    end,
+  },
+})
+
+T["update applies fold indicators"]["extmarks present after create"] = function()
+  local tree_buf = T["update applies fold indicators"]._tree
+  local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
+  -- 3 headings → 3 extmarks (root line has none).
+  MiniTest.expect.equality(#marks, 3)
+end
+
+T["update applies fold indicators"]["extmarks refreshed after M.update"] = function()
+  local tree  = require("voom.tree")
+  local body_buf = T["update applies fold indicators"]._body
+  local tree_buf = T["update applies fold indicators"]._tree
+
+  -- Add a new heading to the body.
+  local lines = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
+  table.insert(lines, "# Delta")
+  vim.api.nvim_buf_set_lines(body_buf, 0, -1, false, lines)
+
+  tree.update(body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
+  -- Now 4 headings → 4 extmarks.
+  MiniTest.expect.equality(#marks, 4)
+end
+
 return T

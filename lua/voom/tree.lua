@@ -486,6 +486,7 @@ function M.tree_navigate_left(tree_buf)
 
   local target = M.find_parent_lnum(outline.levels, tree_lnum)
   vim.api.nvim_win_set_cursor(tree_win, { target, 0 })
+  M.apply_fold_indicators(tree_buf, body_buf)
 end
 
 -- Move to the first child of the current node.
@@ -576,6 +577,7 @@ function M.tree_toggle_fold(tree_buf)
   pcall(function()
     vim.api.nvim_win_call(tree_win, function() vim.cmd("normal! za") end)
   end)
+  M.apply_fold_indicators(tree_buf, state.get_body(tree_buf))
 end
 
 -- Move the tree cursor to snLn (the last body-selected node), restoring
@@ -652,6 +654,7 @@ function M.tree_contract_siblings(tree_buf)
   end
   -- Restore cursor to original position.
   vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
+  M.apply_fold_indicators(tree_buf, body_buf)
 end
 
 -- Open (zo) all sibling folds of the current tree node.
@@ -677,6 +680,7 @@ function M.tree_expand_siblings(tree_buf)
     end)
   end
   vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
+  M.apply_fold_indicators(tree_buf, body_buf)
 end
 
 -- ==============================================================================
@@ -1097,6 +1101,11 @@ function M.create(body_buf, mode_name)
   M.setup_body_keymaps(body_buf, tree_buf)
   setup_autocommands(body_buf, tree_buf)
 
+  -- Apply fold-state icons now that the tree window exists and foldexpr has
+  -- been configured.  Must come after setup_autocommands so that the tree win
+  -- is fully initialised before foldclosed() is queried inside the function.
+  M.apply_fold_indicators(tree_buf, body_buf)
+
   -- Leave the cursor in the body window so the user can continue editing.
   local new_body_win = find_win_for_buf(body_buf)
   if new_body_win then
@@ -1122,6 +1131,7 @@ function M.update(body_buf)
   local tree_lines = build_tree_lines(buf_name, outline)
   write_lines(entry.tree, tree_lines)
   state.set_outline(body_buf, outline)
+  M.apply_fold_indicators(entry.tree, body_buf)
 end
 
 -- Delete the tree buffer and clean up all associated state for `body_buf`.
