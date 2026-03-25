@@ -887,9 +887,12 @@ end
 -- Sibling fold operations
 -- ==============================================================================
 
--- Close (zc) all sibling folds of the current tree node.
--- pcall is used around each fold operation because not every line has a fold,
--- and Neovim raises an error for `zc` / `zo` on non-fold lines.
+-- Close all sibling folds of the current tree node.
+--
+-- Cursor movements are batched inside a single nvim_win_call so that Neovim
+-- redraws the screen only once, after all operations complete, rather than
+-- after each cursor jump.  pcall guards are no longer needed here because
+-- foldmethod=expr guarantees that every parent node has a real fold.
 function M.tree_contract_siblings(tree_buf)
   local body_buf = state.get_body(tree_buf)
   if not body_buf then return end
@@ -900,37 +903,35 @@ function M.tree_contract_siblings(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
+  local levels    = outline.levels
 
-  -- OOP edits rewrite tree lines; refresh fold metadata before issuing zc.
-  pcall(function()
-    vim.api.nvim_win_call(tree_win, function()
-      vim.cmd("normal! zx")
-    end)
+  -- All fold operations run inside one window call so the cursor's
+  -- intermediate positions never reach the screen.  zx is issued first to
+  -- recompute fold metadata after any OOP edits that rewrote tree lines.
+  vim.api.nvim_win_call(tree_win, function()
+    vim.cmd("normal! zx")
+
+    local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
+    while lnum do
+      -- levels[lnum] = depth of this node; levels[lnum+1] = depth of next.
+      local has_children = (levels[lnum + 1] ~= nil) and (levels[lnum + 1] > levels[lnum])
+      if has_children then
+        vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
+        vim.cmd("normal! zc")
+      end
+      lnum = M.find_next_sibling_lnum(levels, lnum)
+    end
+
+    -- Restore the cursor to where it was before the loop.
+    vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
   end)
 
-  local levels = outline.levels
-  local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
-  while lnum do
-    -- levels[lnum] = depth of this node; levels[lnum+1] = depth of next.
-    local has_children = (levels[lnum + 1] ~= nil) and (levels[lnum + 1] > levels[lnum])
-    pcall(function()
-      if has_children then
-        vim.api.nvim_win_call(tree_win, function()
-          vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
-          vim.cmd("normal! zc")
-        end)
-      end
-    end)
-
-    lnum = M.find_next_sibling_lnum(levels, lnum)
-  end
-
-  -- Restore cursor to original position.
-  vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
   M.apply_fold_indicators(tree_buf, body_buf)
 end
 
--- Open (zo) all sibling folds of the current tree node.
+-- Open all sibling folds of the current tree node.
+--
+-- Uses the same single-nvim_win_call batching as tree_contract_siblings.
 function M.tree_expand_siblings(tree_buf)
   local body_buf = state.get_body(tree_buf)
   if not body_buf then return end
@@ -941,31 +942,24 @@ function M.tree_expand_siblings(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
+  local levels    = outline.levels
 
-  -- OOP edits rewrite tree lines; refresh fold metadata before issuing zo.
-  pcall(function()
-    vim.api.nvim_win_call(tree_win, function()
-      vim.cmd("normal! zx")
-    end)
+  vim.api.nvim_win_call(tree_win, function()
+    vim.cmd("normal! zx")
+
+    local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
+    while lnum do
+      local has_children = (levels[lnum + 1] ~= nil) and (levels[lnum + 1] > levels[lnum])
+      if has_children then
+        vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
+        vim.cmd("normal! zo")
+      end
+      lnum = M.find_next_sibling_lnum(levels, lnum)
+    end
+
+    vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
   end)
 
-  local levels = outline.levels
-  local lnum = M.find_first_sibling_lnum(levels, tree_lnum)
-  while lnum do
-    local has_children = (levels[lnum + 1] ~= nil) and (levels[lnum + 1] > levels[lnum])
-    pcall(function()
-      if has_children then
-        vim.api.nvim_win_call(tree_win, function()
-          vim.api.nvim_win_set_cursor(tree_win, { lnum, 0 })
-          vim.cmd("normal! zo")
-        end)
-      end
-    end)
-
-    lnum = M.find_next_sibling_lnum(levels, lnum)
-  end
-
-  vim.api.nvim_win_set_cursor(tree_win, { tree_lnum, 0 })
   M.apply_fold_indicators(tree_buf, body_buf)
 end
 

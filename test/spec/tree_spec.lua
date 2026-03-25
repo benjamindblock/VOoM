@@ -380,6 +380,44 @@ T["tree.fold_actions"]["tree_contract_siblings closes sibling nodes that have ch
     return vim.fn.foldclosed(2)
   end)
   MiniTest.expect.equality(closed, 2)
+
+  -- Cursor must not have moved during sibling iteration.
+  local cursor_after = vim.api.nvim_win_get_cursor(tree_win)
+  MiniTest.expect.equality(cursor_after[1], 2)
+end
+
+T["tree.fold_actions"]["tree_expand_siblings opens closed sibling nodes"] = function()
+  local tree_mod = require("voom.tree")
+  local lines    = load_fixture("sample.md")
+  local body     = make_scratch_buf(lines, "sample.md")
+  T["tree.fold_actions"]._body_buf = body
+
+  local tree_buf = tree_mod.create(body, "markdown")
+  T["tree.fold_actions"]._tree_buf = tree_buf
+  local tree_win = find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
+
+  -- "Installation" (line 2) is a level-2 sibling with children; collapse
+  -- siblings first so there is something for expand to reopen.
+  vim.api.nvim_win_set_cursor(tree_win, { 2, 0 })
+  tree_mod.tree_contract_siblings(tree_buf)
+
+  local before = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(2)
+  end)
+  MiniTest.expect.equality(before, 2)
+
+  -- Expand siblings; the fold on line 2 should now be open.
+  tree_mod.tree_expand_siblings(tree_buf)
+
+  local after = vim.api.nvim_win_call(tree_win, function()
+    return vim.fn.foldclosed(2)
+  end)
+  MiniTest.expect.equality(after, -1)
+
+  -- Cursor must not have moved during sibling iteration.
+  local cursor_after = vim.api.nvim_win_get_cursor(tree_win)
+  MiniTest.expect.equality(cursor_after[1], 2)
 end
 
 T["tree.fold_actions"]["tree_navigate_right opens closed node before descending"] = function()
