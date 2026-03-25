@@ -27,6 +27,7 @@ local state  = require("voom.state")
 local FOLD_NS  = vim.api.nvim_create_namespace("voom_fold_indicators")
 local GUIDE_NS = vim.api.nvim_create_namespace("voom_indent_guides")
 local HEAD_NS  = vim.api.nvim_create_namespace("voom_headings")
+local BADGE_NS = vim.api.nvim_create_namespace("voom_badges")
 
 -- Per-body history for tree-initiated structural operations.  This guarantees
 -- one tree undo step per tree action even when Neovim coalesces underlying
@@ -128,6 +129,7 @@ local function define_highlights()
   vim.api.nvim_set_hl(0, "VoomFoldClosed",  { default = true, fg = "#e0af68" }) -- ▶ amber
   vim.api.nvim_set_hl(0, "VoomLeafNode",    { default = true, fg = "#565f89" }) -- · muted grey
   vim.api.nvim_set_hl(0, "VoomIndentGuide", { default = true, fg = "#3b4261" }) -- │ dark grey
+  vim.api.nvim_set_hl(0, "VoomBadge",       { default = true, fg = "#565f89", italic = true }) -- +N muted
 
   -- Link per-level heading groups to the treesitter markdown heading groups so
   -- colors automatically adapt to any colorscheme.  `default = true` means a
@@ -212,6 +214,50 @@ local function render_heading_highlights(tree_buf, outline)
   end
 end
 
+-- Append an end-of-line virtual-text badge "+N" on each collapsed parent node,
+-- where N is the total number of descendants (direct + indirect children) hidden
+-- by the fold.
+--
+-- The badge is rendered as EOL virtual text so it never displaces heading text.
+-- Only collapsed folds receive a badge; expanded parents and leaf nodes are left
+-- unmarked.  The count covers all strictly-deeper consecutive entries in
+-- levels[], which equals the entire subtree rooted at that node.
+--
+-- Called from apply_fold_indicators after the fold icons have been placed.
+-- BADGE_NS is pre-cleared by apply_fold_indicators before this is called.
+local function render_count_badges(tree_win, tree_buf, outline)
+  local levels = outline.levels
+
+  vim.api.nvim_win_call(tree_win, function()
+    for idx, lev in ipairs(levels) do
+      -- Count all descendants: walk forward until we hit a node at the same
+      -- or higher (shallower) level, which terminates the subtree.
+      local n_descendants = 0
+      for j = idx + 1, #levels do
+        if levels[j] > lev then
+          n_descendants = n_descendants + 1
+        else
+          break
+        end
+      end
+      if n_descendants == 0 then goto continue end
+
+      -- Tree lines and levels[] are both 1-indexed (no root line; the filename
+      -- lives in the winbar).  foldclosed() takes a 1-indexed vim line number.
+      local vim_line = idx
+      if vim.fn.foldclosed(vim_line) == -1 then goto continue end  -- fold is open
+
+      -- Extmark rows are 0-indexed.
+      vim.api.nvim_buf_set_extmark(tree_buf, BADGE_NS, idx - 1, 0, {
+        virt_text     = { { "+" .. n_descendants, "VoomBadge" } },
+        virt_text_pos = "eol",
+      })
+
+      ::continue::
+    end
+  end)
+end
+
 -- Apply virtual-text fold-state icons to every heading line in `tree_buf`.
 --
 -- The icon placeholder · in each heading line is overlaid (not replaced in the
@@ -239,8 +285,10 @@ function M.apply_fold_indicators(tree_buf, body_buf)
   local cfg = (config.options and config.options.fold_indicators)
     or config.defaults.fold_indicators
 
-  -- Always clear stale fold marks first, even when the feature is disabled.
-  vim.api.nvim_buf_clear_namespace(tree_buf, FOLD_NS, 0, -1)
+  -- Always clear stale fold marks and badges first, even when the feature is
+  -- disabled, so toggling the feature off removes lingering decorations.
+  vim.api.nvim_buf_clear_namespace(tree_buf, FOLD_NS,  0, -1)
+  vim.api.nvim_buf_clear_namespace(tree_buf, BADGE_NS, 0, -1)
 
   -- Fetch outline before the early-return so guides can render independently
   -- of whether fold indicators are enabled.
@@ -299,6 +347,8 @@ function M.apply_fold_indicators(tree_buf, body_buf)
       virt_text_pos = "overlay",
     })
   end
+
+  render_count_badges(tree_win, tree_buf, outline)
 end
 
 -- ==============================================================================

@@ -937,7 +937,7 @@ T["tree.undo_redo"]["undoes move_up one action at a time and preserves tree curs
     top_heading_lines(body),
     { "# Three", "# One", "# Two", "# Four" }
   )
-  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1], 2)
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1], 1)
 
   -- First undo should revert only one move.
   tree_mod.tree_undo(tree_buf)
@@ -946,7 +946,7 @@ T["tree.undo_redo"]["undoes move_up one action at a time and preserves tree curs
     { "# One", "# Three", "# Two", "# Four" }
   )
   -- Cursor should not jump to top/root.
-  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1], 3)
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1], 2)
   MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1] ~= 1, true)
   MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_win)
 

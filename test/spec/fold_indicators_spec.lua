@@ -373,4 +373,262 @@ T["render_indent_guides"]["clears guide marks when enabled=false"] = function()
   config.options = saved
 end
 
+-- ==============================================================================
+-- render_count_badges (via apply_fold_indicators)
+-- ==============================================================================
+--
+-- Badges are EOL virtual-text extmarks placed in BADGE_NS on collapsed parent
+-- nodes.  Because floating-window trees have no folds (foldclosed always
+-- returns -1), the unit tests in the first set verify the "no badge when open"
+-- paths.  The integration set uses tree.create() + real fold manipulation to
+-- verify the "badge when closed" paths.
+
+T["render_count_badges - unit"] = MiniTest.new_set({
+  hooks = {
+    pre_case = function()
+      local state   = require("voom.state")
+      -- Outline: levels [1, 2, 3, 2, 1]
+      --   idx 1 lev 1 — parent with 3 descendants
+      --   idx 2 lev 2 — parent with 1 descendant
+      --   idx 3 lev 3 — leaf
+      --   idx 4 lev 2 — leaf
+      --   idx 5 lev 1 — leaf
+      local outline = {
+        bnodes = { 1, 5, 8, 12, 20 },
+        levels = { 1, 2, 3, 2, 1 },
+        tlines = {
+          " · H1",
+          "   · H2a",
+          "     · H3",
+          "   · H2b",
+          " · H1b",
+        },
+      }
+      local body_buf = make_scratch_buf()
+      local tree_lines = {
+        " · H1",
+        "   · H2a",
+        "     · H3",
+        "   · H2b",
+        " · H1b",
+      }
+      local tree_buf = make_scratch_buf(tree_lines)
+      state.register(body_buf, tree_buf, "markdown", outline)
+      T["render_count_badges - unit"]._body     = body_buf
+      T["render_count_badges - unit"]._tree     = tree_buf
+      local tree_win = open_float_win(tree_buf)
+      T["render_count_badges - unit"]._tree_win = tree_win
+    end,
+    post_case = function()
+      local state = require("voom.state")
+      if vim.api.nvim_win_is_valid(T["render_count_badges - unit"]._tree_win) then
+        vim.api.nvim_win_close(T["render_count_badges - unit"]._tree_win, true)
+      end
+      state.unregister(T["render_count_badges - unit"]._body)
+      del_buf(T["render_count_badges - unit"]._body)
+      del_buf(T["render_count_badges - unit"]._tree)
+    end,
+  },
+})
+
+T["render_count_badges - unit"]["no badges when all folds are open"] = function()
+  -- Float windows have no folds (foldclosed returns -1 everywhere), so no
+  -- parent is collapsed and BADGE_NS should remain empty.
+  local tree = require("voom.tree")
+  local tree_buf = T["render_count_badges - unit"]._tree
+  local body_buf = T["render_count_badges - unit"]._body
+
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_badges")
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
+  MiniTest.expect.equality(#marks, 0)
+end
+
+T["render_count_badges - unit"]["leaf nodes never receive a badge"] = function()
+  -- Leaf nodes (no deeper successors) should never get a badge regardless of
+  -- fold state.  With foldclosed=-1 this is also implied by the open test, but
+  -- we check the leaf rows explicitly to cover the n_descendants==0 branch.
+  local tree = require("voom.tree")
+  local tree_buf = T["render_count_badges - unit"]._tree
+  local body_buf = T["render_count_badges - unit"]._body
+
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_badges")
+  -- Row 2 (idx 3, lev 3) and row 3 (idx 4, lev 2) and row 4 (idx 5, lev 1)
+  -- are all leaves.
+  for _, row in ipairs({ 2, 3, 4 }) do
+    local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { row, 0 }, { row, -1 }, {})
+    MiniTest.expect.equality(#marks, 0)
+  end
+end
+
+T["render_count_badges - unit"]["badges cleared when fold_indicators disabled"] = function()
+  -- If badges exist from a previous call, disabling fold_indicators must clear
+  -- them (BADGE_NS is wiped alongside FOLD_NS at the top of apply_fold_indicators).
+  local tree   = require("voom.tree")
+  local config = require("voom.config")
+  local tree_buf = T["render_count_badges - unit"]._tree
+  local body_buf = T["render_count_badges - unit"]._body
+
+  -- First pass: enabled (no real badges here since folds are open, but verify
+  -- the namespace is empty after a disabled pass too).
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local saved = config.options
+  config.options = { fold_indicators = { enabled = false, icons = {} } }
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_badges")
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, 0, -1, {})
+  MiniTest.expect.equality(#marks, 0)
+
+  config.options = saved
+end
+
+-- ==============================================================================
+-- render_count_badges — integration (real folds)
+-- ==============================================================================
+--
+-- These tests open a real tree window so that foldexpr creates actual folds,
+-- then fold nodes and re-apply indicators to exercise the badge rendering path.
+
+T["render_count_badges - integration"] = MiniTest.new_set({
+  hooks = {
+    pre_case = function()
+      -- Body with three headings: H1 → H2 → H1 (Alpha has one child Beta).
+      local lines = {
+        "# Alpha",
+        "content",
+        "## Beta",
+        "details",
+        "# Gamma",
+      }
+      local body_buf = make_scratch_buf(lines)
+      vim.api.nvim_buf_set_name(body_buf, "badge_test.md")
+      vim.api.nvim_set_current_buf(body_buf)
+
+      local tree = require("voom.tree")
+      local tree_buf = tree.create(body_buf, "markdown")
+      T["render_count_badges - integration"]._body    = body_buf
+      T["render_count_badges - integration"]._tree    = tree_buf
+    end,
+    post_case = function()
+      local tree = require("voom.tree")
+      tree.close(T["render_count_badges - integration"]._body)
+      del_buf(T["render_count_badges - integration"]._body)
+    end,
+  },
+})
+
+T["render_count_badges - integration"]["badge appears on collapsed parent"] = function()
+  local tree     = require("voom.tree")
+  local body_buf = T["render_count_badges - integration"]._body
+  local tree_buf = T["render_count_badges - integration"]._tree
+  local tree_win = (function()
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == tree_buf then return w end
+    end
+  end)()
+
+  -- Collapse the first heading (Alpha → Beta) by closing its fold.
+  vim.api.nvim_win_call(tree_win, function()
+    vim.api.nvim_win_set_cursor(tree_win, { 1, 0 })
+    vim.cmd("normal! zc")
+  end)
+
+  -- Re-apply indicators so badges are computed against the new fold state.
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_badges")
+  -- Row 0 (Alpha, levels[1]=1) should now have a "+1" badge.
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {
+    details = true,
+  })
+  MiniTest.expect.equality(#marks, 1)
+  local vt = marks[1][4].virt_text
+  MiniTest.expect.equality(vt[1][1], "+1")
+  MiniTest.expect.equality(vt[1][2], "VoomBadge")
+end
+
+T["render_count_badges - integration"]["badge absent after re-opening fold"] = function()
+  local tree     = require("voom.tree")
+  local body_buf = T["render_count_badges - integration"]._body
+  local tree_buf = T["render_count_badges - integration"]._tree
+  local tree_win = (function()
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == tree_buf then return w end
+    end
+  end)()
+
+  -- Collapse then re-open the first fold.
+  vim.api.nvim_win_call(tree_win, function()
+    vim.api.nvim_win_set_cursor(tree_win, { 1, 0 })
+    vim.cmd("normal! zc")
+    vim.cmd("normal! zo")
+  end)
+
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_badges")
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {})
+  MiniTest.expect.equality(#marks, 0)
+end
+
+T["render_count_badges - integration"]["descendant count is total subtree size"] = function()
+  -- Outline: Alpha(H1) → Beta(H2) → Gamma(H3) + Delta(H2) — 3 descendants of Alpha.
+  local tree     = require("voom.tree")
+  local state    = require("voom.state")
+  local body_buf = T["render_count_badges - integration"]._body
+  local tree_buf = T["render_count_badges - integration"]._tree
+  local tree_win = (function()
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == tree_buf then return w end
+    end
+  end)()
+
+  -- Replace the outline with a deeper hierarchy (4 headings: lev 1,2,3,2).
+  local outline = {
+    bnodes = { 1, 3, 5, 8 },
+    levels = { 1, 2, 3, 2 },
+    tlines = {
+      " · Alpha",
+      "   · Beta",
+      "     · Gamma",
+      "   · Delta",
+    },
+  }
+  -- Rewrite tree buffer to match (4 lines).
+  vim.api.nvim_buf_set_option(tree_buf, "modifiable", true)
+  vim.api.nvim_buf_set_lines(tree_buf, 0, -1, false, {
+    " · Alpha",
+    "   · Beta",
+    "     · Gamma",
+    "   · Delta",
+  })
+  vim.api.nvim_buf_set_option(tree_buf, "modifiable", false)
+
+  -- Update state directly so apply_fold_indicators sees the new outline.
+  state.unregister(body_buf)
+  state.register(body_buf, tree_buf, "markdown", outline)
+
+  -- Force fold recomputation for the new line count.
+  vim.api.nvim_win_call(tree_win, function()
+    vim.cmd("normal! zx")   -- recompute folds
+    vim.api.nvim_win_set_cursor(tree_win, { 1, 0 })
+    vim.cmd("normal! zc")   -- collapse Alpha
+  end)
+
+  tree.apply_fold_indicators(tree_buf, body_buf)
+
+  local ns = vim.api.nvim_create_namespace("voom_badges")
+  -- Alpha (row 0, levels[1]=1) has 3 descendants (Beta, Gamma, Delta).
+  local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {
+    details = true,
+  })
+  MiniTest.expect.equality(#marks, 1)
+  MiniTest.expect.equality(marks[1][4].virt_text[1][1], "+3")
+end
+
 return T
