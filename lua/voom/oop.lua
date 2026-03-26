@@ -12,6 +12,108 @@
 --
 -- Port of the editing functions in:
 --   legacy/autoload/voom/voom_vimplugin2657/voom_vim.py
+--
+-- ==============================================================================
+-- Private internal flow for tree-driven structural edits
+-- ==============================================================================
+--
+-- Every mutating tree command follows this six-phase flow.  The phases are
+-- documented here to make the expected structure explicit; individual
+-- commands still express each phase inline today.  Later refactor steps
+-- (items 7–9 in REFACTOR.md) will extract shared helpers for phases that
+-- are genuinely duplicated, while keeping command-specific logic local.
+--
+-- Phase 1 — Resolve command context
+--   Gather the working set that every tree-initiated edit needs:
+--     body_buf       — the body buffer (via state.get_body)
+--     outline        — current { bnodes, levels } (via state.get_outline)
+--     outline_state  — style prefs for the mode parser (via state.get_outline_state)
+--     mode           — the markup mode module (via modes.get + state.get_mode)
+--     tree_win       — the tree window handle (via find_win_for_buf)
+--     tlnum          — the tree-cursor line number (via nvim_win_get_cursor)
+--   Any nil result from the state lookups or a missing tree window is a
+--   silent early return — the command is a no-op when context is incomplete.
+--
+-- Phase 2 — Compute the body mutation
+--   Read body lines into a Lua table and compute the structural edit:
+--     - Determine affected body-line range(s) and outline index ranges.
+--     - Build the replacement line table (insert, rearrange, or delete).
+--     - Call mode.do_body_after_oop() for format normalization when the
+--       mode provides it (blank-line cleanup, ATX/setext heading rewrite).
+--   This phase is pure data transformation — no buffer writes, no state
+--   changes, no cursor moves.
+--
+-- Phase 3 — Write the body
+--   Apply the computed line table to the body buffer via write_body() (which
+--   calls nvim_buf_set_lines inside nvim_buf_call to preserve undo
+--   segmentation).  insert_node uses nvim_buf_set_lines directly for
+--   appending rather than full replacement; sort uses it for ranged
+--   replacement.  The body buffer is the source of truth — all downstream
+--   state is derived from it.
+--
+-- Phase 4 — Refresh outline and tree
+--   Call refresh_after_edit(body_buf), which:
+--     a. Calls tree.update() to re-parse the body and rebuild the tree
+--        display (outline data in state is replaced by the fresh parse).
+--     b. Syncs the stored changedtick so the BufEnter autocommand does not
+--        trigger a redundant re-parse on the next window entry.
+--
+-- Phase 5 — Restore selection and cursor
+--   Each command determines its own post-edit selection target.  The target
+--   is expressed as an OopResult (see below) and applied after refresh:
+--     - Set state.snLn to the target tree line.
+--     - Move the tree-window cursor to that line.
+--     - Optionally transfer focus to the body window and set the body
+--       cursor (insert_node jumps to the "NewHeadline" placeholder).
+--
+-- Phase 6 — Command-specific follow-up
+--   Optional status feedback (echo/notify) or clipboard updates that do
+--   not affect buffer or outline state.  Examples:
+--     - cut_node / copy_node echo the node count.
+--     - paste_node echoes nothing on success but echoes errors on invalid
+--       clipboard content.
+--
+-- ==============================================================================
+-- Private result contract for mutating commands (OopResult)
+-- ==============================================================================
+--
+-- After phases 2–3 complete, each mutating command produces a small result
+-- table that carries only the information phases 4–6 need.  This contract
+-- is private to this module — it is not exposed through voom.oop, voom.state,
+-- or any other public API.
+--
+-- OopResult = {
+--   -- Whether tree refresh is needed.  True for all body-mutating commands.
+--   -- False only for read-only operations (copy_node) or early-return no-ops.
+--   refresh = bool,
+--
+--   -- The tree line that should be selected after refresh.  Nil means "keep
+--   -- the current snLn unchanged" (used when the command is a no-op).
+--   --
+--   -- Selection policies by command:
+--   --   cut       → node above the deleted range, clamped to [1, #bnodes]
+--   --   paste     → first pasted node (insert_idx + 1)
+--   --   move_up   → moved node's new tree line (previous sibling's old line)
+--   --   move_down → moved node's new tree line (after the passed-over sibling)
+--   --   promote   → same tree line (tlnum unchanged)
+--   --   demote    → same tree line (tlnum unchanged)
+--   --   insert    → new node's tree line (looked up by body line in refreshed outline)
+--   --   sort      → selected node's new tree line (tracked through chunk reorder)
+--   target_tlnum = int | nil,
+--
+--   -- Focus disposition after the operation completes.
+--   --   "tree" → focus stays in the tree window (default for most commands)
+--   --   "body" → focus transfers to the body window (insert_node, edit_node)
+--   focus = "tree" | "body",
+--
+--   -- Body cursor target when focus == "body".  Nil when focus == "tree".
+--   -- { lnum, col } — 1-indexed line number and 0-indexed column.
+--   body_cursor = { int, int } | nil,
+--
+--   -- Optional status message to echo after the operation.
+--   -- { { text, hlgroup }, ... } — same shape as nvim_echo's chunks arg.
+--   echo = { { string, string }, ... } | nil,
+-- }
 
 local M = {}
 

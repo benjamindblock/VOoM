@@ -74,20 +74,23 @@ The public plugin API, commands, keymaps, and user-visible behavior must remain 
 - No direct `state.trees[` access exists in production code; no migration needed for that table.
 - All 192 contract tests pass with zero failures after migration.
 
-4. **Define the internal flow and result contract before extracting helpers**
-- Write down the private flow that every mutating tree command should follow:
-  - Resolve command context.
-  - Compute the body mutation and any mode-specific normalization inputs.
-  - Write the body.
-  - Refresh outline/tree state.
-  - Apply final selection/focus behavior.
-- Introduce a small private result shape for mutating commands that carries only the information needed after the body write:
-  - Whether refresh is required.
-  - How to determine the selected tree line after refresh.
-  - Whether focus stays in the tree or moves to the body.
-  - Any body cursor target needed after refresh.
-  - Optional status message.
-- Keep this result contract private to the implementation. Do not expose it through `voom.oop` or `voom.state`.
+4. **Define the internal flow and result contract before extracting helpers** — COMPLETE
+- Six-phase private flow documented in `oop.lua` header comment block:
+  1. Resolve command context (body_buf, outline, outline_state, mode, tree_win, tlnum).
+  2. Compute the body mutation (pure data transformation, no side effects).
+  3. Write the body (via `write_body()` or `nvim_buf_set_lines`).
+  4. Refresh outline and tree (via `refresh_after_edit()`).
+  5. Restore selection and cursor (command-specific target_tlnum, optional body focus).
+  6. Command-specific follow-up (echo messages, clipboard updates).
+- Private `OopResult` contract defined in `oop.lua` header:
+  - `refresh`      — whether tree refresh is needed (bool).
+  - `target_tlnum` — tree line to select after refresh (int|nil).
+  - `focus`        — "tree" or "body" disposition after the operation.
+  - `body_cursor`  — { lnum, col } target when focus == "body" (nil otherwise).
+  - `echo`         — optional status message chunks for nvim_echo.
+- Selection policies documented per command (cut, paste, move, promote/demote, insert, sort).
+- Contract is private to `oop.lua` — not exposed through `voom.oop`, `voom.state`, or any other public API.
+- All 192 contract tests pass with zero failures.
 
 5. **Separate OOP operations into real families before refactoring internals**
 - Split the refactor mentally and in code into:
