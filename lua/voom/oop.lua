@@ -222,6 +222,58 @@ local function write_body(body_buf, lines)
   end)
 end
 
+-- Resolve the mode module and outline style preferences for a body buffer.
+--
+-- Most mutating commands need mode + outline_state for do_body_after_oop()
+-- or new_headline().  Commands with strict requirements (insert_node,
+-- paste_node) nil-check the return values and early-return; commands with
+-- lenient requirements (cut, move, promote/demote) guard at the call site.
+--
+-- @return mode|nil, outline_state|nil
+local function resolve_mode(body_buf)
+  local mode_name = state.get_mode(body_buf)
+  if not mode_name then return nil, nil end
+  return modes.get(mode_name), state.get_outline_state(body_buf)
+end
+
+-- Set the selected tree line and move the tree-window cursor to match.
+--
+-- This is the shared Phase 5 primitive: after a structural edit and refresh,
+-- every command needs to persist the new snLn and position the tree cursor.
+-- Safe to call with an invalid or nil tree_win.
+local function select_node(body_buf, tree_win, tlnum)
+  state.set_snLn(body_buf, tlnum)
+  if tree_win and vim.api.nvim_win_is_valid(tree_win) then
+    vim.api.nvim_win_set_cursor(tree_win, { tlnum, 0 })
+  end
+end
+
+-- After a refresh, find the tree line whose bnode equals `body_lnum`.
+--
+-- insert_node uses this to locate the newly created heading in the
+-- refreshed outline.  Returns the tree line number, or nil if not found.
+local function tree_lnum_after_refresh(body_buf, body_lnum)
+  local outline = state.get_outline(body_buf)
+  if not outline then return nil end
+  for i, bn in ipairs(outline.bnodes) do
+    if bn == body_lnum then return i end
+  end
+  return nil
+end
+
+-- Return the last body line for a subtree whose last bnodes index is
+-- `ln_end`.  When `ln_end` is the final node, the range extends to
+-- `total_body` (end of document).
+--
+-- This is the shared computation for the recurring pattern:
+--   if ln_end < #bnodes then bnodes[ln_end + 1] - 1 else total_body end
+local function body_line_end(bnodes, ln_end, total_body)
+  if ln_end < #bnodes then
+    return bnodes[ln_end + 1] - 1
+  end
+  return total_body
+end
+
 -- Resolve the shared context for any tree-initiated command.
 --
 -- Returns a table with the body buffer, outline data, tree window, cursor
@@ -332,16 +384,8 @@ function M.insert_node(tree_buf, as_child)
   if not ctx then
     return
   end
-  local outline_state = state.get_outline_state(ctx.body_buf)
-  if not outline_state then
-    return
-  end
-  local mode_name = state.get_mode(ctx.body_buf)
-  if not mode_name then
-    return
-  end
-  local mode = modes.get(mode_name)
-  if not mode then
+  local mode, outline_state = resolve_mode(ctx.body_buf)
+  if not mode or not outline_state then
     return
   end
 
@@ -412,20 +456,10 @@ function M.insert_node(tree_buf, as_child)
   end
 
   -- Find the new tree line for this heading by looking up new_bln in the
-  -- refreshed outline.
-  local new_outline = state.get_outline(ctx.body_buf)
-  if new_outline then
-    for i, bn in ipairs(new_outline.bnodes) do
-      if bn == new_bln then
-        -- Direct mapping: tree line = bnodes index (no root offset).
-        local new_tlnum = i
-        state.set_snLn(ctx.body_buf, new_tlnum)
-        if ctx.tree_win and vim.api.nvim_win_is_valid(ctx.tree_win) then
-          vim.api.nvim_win_set_cursor(ctx.tree_win, { new_tlnum, 0 })
-        end
-        break
-      end
-    end
+  -- refreshed outline (direct mapping: tree line = bnodes index).
+  local new_tlnum = tree_lnum_after_refresh(ctx.body_buf, new_bln)
+  if new_tlnum then
+    select_node(ctx.body_buf, ctx.tree_win, new_tlnum)
   end
 
   -- Jump to the body and position cursor on the "NewHeadline" text.
@@ -492,12 +526,10 @@ function M.cut_node(tree_buf)
   if not ctx then
     return
   end
-  local outline_state = state.get_outline_state(ctx.body_buf)
-  local mode_name = state.get_mode(ctx.body_buf)
-  if not mode_name then
+  local mode, outline_state = resolve_mode(ctx.body_buf)
+  if not mode then
     return
   end
-  local mode = modes.get(mode_name)
 
   local bnodes = ctx.bnodes
   local levels = ctx.levels
@@ -512,12 +544,7 @@ function M.cut_node(tree_buf)
 
   -- Body range.
   local bln1 = bnodes[ln1]
-  local bln2
-  if ln2 < #bnodes then
-    bln2 = bnodes[ln2 + 1] - 1
-  else
-    bln2 = total_body
-  end
+  local bln2 = body_line_end(bnodes, ln2, total_body)
 
   -- Copy to clipboard before removing.
   local cut_body_lines = vim.api.nvim_buf_get_lines(ctx.body_buf, bln1 - 1, bln2, false)
@@ -581,24 +608,14 @@ function M.cut_node(tree_buf)
   write_body(ctx.body_buf, all_lines)
   refresh_after_edit(ctx.body_buf)
 
-  -- Position cursor on the node above the deleted range.
-  local target_tlnum = tlnum - 1
-  if target_tlnum < 1 then
-    target_tlnum = 1
-  end
-  -- Clamp to valid range after refresh.
+  -- Position cursor on the node above the deleted range, clamped to valid range.
+  local target_tlnum = math.max(1, tlnum - 1)
   local new_outline = state.get_outline(ctx.body_buf)
   if new_outline then
-    local max_tlnum = #new_outline.bnodes
-    if target_tlnum > max_tlnum then
-      target_tlnum = max_tlnum
-    end
+    target_tlnum = math.min(target_tlnum, #new_outline.bnodes)
   end
 
-  state.set_snLn(ctx.body_buf, target_tlnum)
-  if ctx.tree_win and vim.api.nvim_win_is_valid(ctx.tree_win) then
-    vim.api.nvim_win_set_cursor(ctx.tree_win, { target_tlnum, 0 })
-  end
+  select_node(ctx.body_buf, ctx.tree_win, target_tlnum)
 
   local node_count = #cut_levels
   vim.api.nvim_echo(
@@ -625,16 +642,8 @@ function M.paste_node(tree_buf)
   if not ctx then
     return
   end
-  local outline_state = state.get_outline_state(ctx.body_buf)
-  if not outline_state then
-    return
-  end
-  local mode_name = state.get_mode(ctx.body_buf)
-  if not mode_name then
-    return
-  end
-  local mode = modes.get(mode_name)
-  if not mode then
+  local mode, outline_state = resolve_mode(ctx.body_buf)
+  if not mode or not outline_state then
     return
   end
 
@@ -783,16 +792,10 @@ function M.paste_node(tree_buf)
   local new_tlnum = tlnum1
   local new_outline = state.get_outline(ctx.body_buf)
   if new_outline then
-    local max_tlnum = #new_outline.bnodes
-    if new_tlnum > max_tlnum then
-      new_tlnum = max_tlnum
-    end
+    new_tlnum = math.min(new_tlnum, #new_outline.bnodes)
   end
 
-  state.set_snLn(ctx.body_buf, new_tlnum)
-  if ctx.tree_win and vim.api.nvim_win_is_valid(ctx.tree_win) then
-    vim.api.nvim_win_set_cursor(ctx.tree_win, { new_tlnum, 0 })
-  end
+  select_node(ctx.body_buf, ctx.tree_win, new_tlnum)
 end
 
 -- ==============================================================================
@@ -806,12 +809,7 @@ function M.move_up(tree_buf)
   if not ctx then
     return
   end
-  local outline_state = state.get_outline_state(ctx.body_buf)
-  local mode_name = state.get_mode(ctx.body_buf)
-  if not mode_name then
-    return
-  end
-  local mode = modes.get(mode_name)
+  local mode, outline_state = resolve_mode(ctx.body_buf)
 
   local tlnum = ctx.tlnum
   if tlnum < 1 then
@@ -845,12 +843,7 @@ function M.move_up(tree_buf)
 
   -- Body ranges.
   local bln1 = bnodes[ln1]
-  local bln2
-  if ln2 < #bnodes then
-    bln2 = bnodes[ln2 + 1] - 1
-  else
-    bln2 = total_body
-  end
+  local bln2 = body_line_end(bnodes, ln2, total_body)
   local bln_up1 = bnodes[lnUp1]
 
   -- Read all body lines.
@@ -933,11 +926,7 @@ function M.move_up(tree_buf)
   refresh_after_edit(ctx.body_buf)
 
   -- Position cursor: the moved node is now at tree line lnUp1 (direct mapping).
-  local new_tlnum = lnUp1
-  state.set_snLn(ctx.body_buf, new_tlnum)
-  if ctx.tree_win and vim.api.nvim_win_is_valid(ctx.tree_win) then
-    vim.api.nvim_win_set_cursor(ctx.tree_win, { new_tlnum, 0 })
-  end
+  select_node(ctx.body_buf, ctx.tree_win, lnUp1)
 end
 
 -- ==============================================================================
@@ -950,12 +939,7 @@ function M.move_down(tree_buf)
   if not ctx then
     return
   end
-  local outline_state = state.get_outline_state(ctx.body_buf)
-  local mode_name = state.get_mode(ctx.body_buf)
-  if not mode_name then
-    return
-  end
-  local mode = modes.get(mode_name)
+  local mode, outline_state = resolve_mode(ctx.body_buf)
 
   local tlnum = ctx.tlnum
   if tlnum < 1 then
@@ -997,14 +981,8 @@ function M.move_down(tree_buf)
 
   -- Body ranges.
   local bln1 = bnodes[ln1]
-  local bln2 = bnodes[ln2 + 1] and (bnodes[ln2 + 1] - 1) or total_body
-
-  local bln_ins
-  if lnIns < #bnodes then
-    bln_ins = bnodes[lnIns + 1] - 1
-  else
-    bln_ins = total_body
-  end
+  local bln2 = body_line_end(bnodes, ln2, total_body)
+  local bln_ins = body_line_end(bnodes, lnIns, total_body)
 
   -- Read all body lines.
   local all_lines = vim.api.nvim_buf_get_lines(ctx.body_buf, 0, -1, false)
@@ -1086,11 +1064,7 @@ function M.move_down(tree_buf)
   refresh_after_edit(ctx.body_buf)
 
   -- Position cursor at new location (new_snLn_idx is already a tree line).
-  local new_tlnum = new_snLn_idx
-  state.set_snLn(ctx.body_buf, new_tlnum)
-  if ctx.tree_win and vim.api.nvim_win_is_valid(ctx.tree_win) then
-    vim.api.nvim_win_set_cursor(ctx.tree_win, { new_tlnum, 0 })
-  end
+  select_node(ctx.body_buf, ctx.tree_win, new_snLn_idx)
 end
 
 -- ==============================================================================
@@ -1103,12 +1077,7 @@ function M.promote(tree_buf)
   if not ctx then
     return
   end
-  local outline_state = state.get_outline_state(ctx.body_buf)
-  local mode_name = state.get_mode(ctx.body_buf)
-  if not mode_name then
-    return
-  end
-  local mode = modes.get(mode_name)
+  local mode, outline_state = resolve_mode(ctx.body_buf)
 
   local tlnum = ctx.tlnum
   if tlnum < 1 then
@@ -1147,12 +1116,7 @@ function M.promote(tree_buf)
 
   -- Body range.
   local blnum1 = bnodes[ln1]
-  local blnum2
-  if ln2 < #bnodes then
-    blnum2 = bnodes[ln2 + 1] - 1
-  else
-    blnum2 = total_body
-  end
+  local blnum2 = body_line_end(bnodes, ln2, total_body)
 
   -- Call do_body_after_oop for format changes (ATX ↔ setext etc.)
   if mode and mode.do_body_after_oop and outline_state then
@@ -1177,10 +1141,7 @@ function M.promote(tree_buf)
   refresh_after_edit(ctx.body_buf)
 
   -- Keep cursor on the same node.
-  state.set_snLn(ctx.body_buf, tlnum)
-  if ctx.tree_win and vim.api.nvim_win_is_valid(ctx.tree_win) then
-    vim.api.nvim_win_set_cursor(ctx.tree_win, { tlnum, 0 })
-  end
+  select_node(ctx.body_buf, ctx.tree_win, tlnum)
 end
 
 -- ==============================================================================
@@ -1193,12 +1154,7 @@ function M.demote(tree_buf)
   if not ctx then
     return
   end
-  local outline_state = state.get_outline_state(ctx.body_buf)
-  local mode_name = state.get_mode(ctx.body_buf)
-  if not mode_name then
-    return
-  end
-  local mode = modes.get(mode_name)
+  local mode, outline_state = resolve_mode(ctx.body_buf)
 
   local tlnum = ctx.tlnum
   if tlnum < 1 then
@@ -1248,12 +1204,7 @@ function M.demote(tree_buf)
 
   -- Body range.
   local blnum1 = bnodes[ln1]
-  local blnum2
-  if ln2 < #bnodes then
-    blnum2 = bnodes[ln2 + 1] - 1
-  else
-    blnum2 = total_body
-  end
+  local blnum2 = body_line_end(bnodes, ln2, total_body)
 
   -- Call do_body_after_oop for format changes.
   if mode and mode.do_body_after_oop and outline_state then
@@ -1278,10 +1229,7 @@ function M.demote(tree_buf)
   refresh_after_edit(ctx.body_buf)
 
   -- Keep cursor on the same node.
-  state.set_snLn(ctx.body_buf, tlnum)
-  if ctx.tree_win and vim.api.nvim_win_is_valid(ctx.tree_win) then
-    vim.api.nvim_win_set_cursor(ctx.tree_win, { tlnum, 0 })
-  end
+  select_node(ctx.body_buf, ctx.tree_win, tlnum)
 end
 
 -- ==============================================================================
@@ -1350,12 +1298,7 @@ function M.sort(body_buf, args_string)
     local sib_end = sib_idx + sub_count -- last bnodes index in this branch
 
     local bln1 = bnodes[sib_idx]
-    local bln2
-    if sib_end < #bnodes then
-      bln2 = bnodes[sib_end + 1] - 1
-    else
-      bln2 = total_body
-    end
+    local bln2 = body_line_end(bnodes, sib_end, total_body)
 
     local body_lines = vim.api.nvim_buf_get_lines(body_buf, bln1 - 1, bln2, false)
 
@@ -1430,13 +1373,8 @@ function M.sort(body_buf, args_string)
   -- Rebuild the body by replacing the sibling range with sorted chunks.
   -- We need the original first and last body lines of the entire sibling group.
   local orig_bln1 = bnodes[first_sib]
-  local orig_bln2
   local last_sib_end = last_sib + M.count_subnodes(levels, last_sib)
-  if last_sib_end < #bnodes then
-    orig_bln2 = bnodes[last_sib_end + 1] - 1
-  else
-    orig_bln2 = total_body
-  end
+  local orig_bln2 = body_line_end(bnodes, last_sib_end, total_body)
 
   -- Collect all sorted body lines.
   local sorted_lines = {}
@@ -1460,10 +1398,7 @@ function M.sort(body_buf, args_string)
       selected_tlnum = selected_tlnum + #chunk.levels_slice
     end
 
-    state.set_snLn(body_buf, selected_tlnum)
-    if tree_win and vim.api.nvim_win_is_valid(tree_win) then
-      vim.api.nvim_win_set_cursor(tree_win, { selected_tlnum, 0 })
-    end
+    select_node(body_buf, tree_win, selected_tlnum)
   end
 end
 

@@ -114,20 +114,23 @@ The public plugin API, commands, keymaps, and user-visible behavior must remain 
 - Module is strictly read-only — no coupling to structural edit logic.
 - All 192 contract tests pass with zero failures.
 
-7. **Extract shared OOP primitives around context resolution and body writes**
-- Acknowledge existing local helpers in `oop.lua` that already handle some of this work:
-  - `write_body(body_buf, lines)` (line 122): writes replacement body lines inside `nvim_buf_call` to preserve undo segmentation.
-  - `refresh_after_edit(body_buf)` (line 114): calls `tree.update` and syncs `changedtick`.
-  - These should be promoted to shared internal helpers rather than rewritten from scratch.
-- Add small internal helpers for remaining recurring work:
-  - Resolve body/tree/mode/outline/tree window for tree-context operations.
-  - Resolve outline/tree window for sort.
-  - Compute subtree body ranges and target tree lines.
-  - Resolve a tree line from a body line after refresh when a command needs to land on a new node.
-- Keep command-specific structure readable:
-  - Each command should still visibly express its own intent.
-  - Selection and cursor semantics should remain obvious at the command site.
-- Avoid a monolithic helper that hides the full control flow.
+7. **Extract shared OOP primitives around context resolution and body writes** — COMPLETE
+- Existing local helpers `write_body` and `refresh_after_edit` retained as shared module-private helpers (no rewrite needed — already well-scoped).
+- Four new module-private helpers added to `oop.lua`:
+  - `resolve_mode(body_buf)` — returns `mode, outline_state` for body buffer; replaces the repeated mode-name/get/outline-state lookup sequence in all seven mutating commands.
+  - `select_node(body_buf, tree_win, tlnum)` — sets `snLn` and tree-window cursor in one call; replaces the duplicated Phase 5 pattern in all commands that restore selection after an edit.
+  - `tree_lnum_after_refresh(body_buf, body_lnum)` — looks up a body line number in the refreshed outline to find the corresponding tree line; used by `insert_node` to locate the newly created heading.
+  - `body_line_end(bnodes, ln_end, total_body)` — computes the last body line for a subtree given its last bnodes index; replaces the `if ln_end < #bnodes then bnodes[ln_end + 1] - 1 else total_body end` pattern duplicated across cut, move, promote, demote, and sort.
+- All nine commands migrated:
+  - `insert_node`: uses `resolve_mode`, `tree_lnum_after_refresh`, `select_node`.
+  - `cut_node`: uses `resolve_mode`, `body_line_end`, `select_node`.
+  - `paste_node`: uses `resolve_mode`, `select_node`.
+  - `move_up`, `move_down`: use `resolve_mode`, `body_line_end`, `select_node`.
+  - `promote`, `demote`: use `resolve_mode`, `body_line_end`, `select_node`.
+  - `sort`: uses `body_line_end`, `select_node`.
+  - `copy_node`: no changes needed (read-only, no mode resolution or cursor restoration).
+- Command-specific structure preserved: each command still visibly expresses its own mutation logic, selection policy, and follow-up behavior.
+- All 192 contract tests pass with zero failures.
 
 8. **Extend `refresh_after_edit` into a full post-write coordinator**
 - `refresh_after_edit(body_buf)` already exists as a local function in `oop.lua` (line 114), handling `tree.update` and `changedtick` sync. Extend it rather than creating a new coordinator.
