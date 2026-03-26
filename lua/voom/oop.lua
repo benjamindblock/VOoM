@@ -1321,8 +1321,12 @@ function M.sort(body_buf, args_string)
     end
   end
 
-  -- Replace in buffer.
-  vim.api.nvim_buf_set_lines(body_buf, orig_bln1 - 1, orig_bln2, false, sorted_lines)
+  -- Replace in buffer.  Wrap in nvim_buf_call so the write creates a proper
+  -- undo step in the body buffer's undo tree, consistent with write_body()
+  -- used by other OOP commands (matters when sort is invoked from the tree).
+  vim.api.nvim_buf_call(body_buf, function()
+    vim.api.nvim_buf_set_lines(0, orig_bln1 - 1, orig_bln2, false, sorted_lines)
+  end)
 
   -- Track the selected node through the reorder so the cursor stays on it.
   local target_tlnum

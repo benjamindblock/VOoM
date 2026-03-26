@@ -163,14 +163,17 @@ The public plugin API, commands, keymaps, and user-visible behavior must remain 
 - Command-specific mutation logic, selection policy computation, and body cursor targeting remain local to each command.
 - All 192 contract tests pass with zero failures.
 
-10. **Refactor `sort` separately**
-- Keep `sort` on its own path because its entry semantics differ from tree-initiated edits.
-- Share only the helpers that fit naturally:
-  - Outline lookup.
-  - Body rewrite.
-  - Tree refresh and changedtick sync.
-  - Selection restoration where the behavior is truly shared.
-- Preserve current semantics around sibling-group discovery, sorting options, and cursor/selection behavior.
+10. **Refactor `sort` separately** — COMPLETE
+- Sort retains its own entry path (body→tree direction, accepts either buffer type) because its context resolution semantics differ from tree-initiated edits.
+- Shared helpers already adopted in items 7–9:
+  - `node_subtree_range` — chunk-building loop and sibling group range computation.
+  - `refresh_after_edit` with OopResult — phases 4–6 (tree refresh, changedtick sync, selection restoration).
+  - `find_win_for_buf` via `tree_utils` — tree window lookup.
+  - `body_line_end` — used indirectly through `node_subtree_range`.
+- Body write now wrapped in `nvim_buf_call` for consistent undo segmentation with other OOP commands (matters when sort is invoked from the tree window).
+- Sort intentionally does not use `resolve_tree_ctx` (opposite resolution direction), `resolve_mode`, or `normalize_and_write` / `do_body_after_oop` (sort does not change heading levels, so blank-line normalization is not applicable).
+- Current semantics around sibling-group discovery, sorting options (i, r, flip, shuffle), and cursor/selection tracking are preserved unchanged.
+- All 192 contract tests pass with zero failures.
 
 11. **Add explicit state test helpers and migrate tests**
 - Replace test cleanup loops that iterate `state.bodies` directly with explicit helpers designed for tests or low-level inspection.
