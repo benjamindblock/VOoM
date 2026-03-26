@@ -181,11 +181,17 @@ The public plugin API, commands, keymaps, and user-visible behavior must remain 
 - No other direct `state.bodies` or `state.trees` access exists in test or production code — the earlier Work Item 3 migration already removed all production-side accesses.
 - All 192 contract tests pass with zero failures.
 
-12. **Define invariant handling precisely**
-- Add internal consistency checks only where the behavior is explicitly defined:
-  - Use production-safe guards where current behavior is a silent early return.
-  - Use stricter assertions only in tests or clearly internal debug-only code paths.
-- Do not add runtime checks that throw, notify, or otherwise change visible behavior unless the existing code already does so.
+12. **Define invariant handling precisely** — COMPLETE
+- Production-safe silent guards added where behavior is a silent early return:
+  - `state.register()` and `state.set_outline()`: guard against missing or mismatched `bnodes`/`levels` arrays (core parallel-array invariant).
+  - `tree.update()`: guard against nil or invalid `tree_buf` before `write_lines()`.
+  - `oop.get_node_range()`: bounds guard on `tlnum` (returns nil, nil for out-of-range).
+  - `oop.count_subnodes()`: bounds guard on `tlnum < 1` (returns 0, consistent with existing `idx >= #levels` guard).
+- Stricter test-only assertion added:
+  - `test/helpers.lua:assert_outline_consistency()`: validates bnodes/levels parallelism, bnode range validity, level range [1,6], and strictly increasing bnode order.
+- Existing guards reviewed and confirmed adequate: `resolve_tree_ctx`, `refresh_after_edit`, traversal utilities, `tree_foldexpr`, promote/demote/move boundary checks.
+- No new runtime errors, notifications, or visible behavior changes introduced.
+- All 192 contract tests pass with zero failures.
 
 13. **Run final parity verification**
 - Re-run the full automated test suite after:

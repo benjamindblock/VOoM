@@ -149,6 +149,9 @@ local clipboard = {
 -- @param total_body_lines int   total number of body lines
 -- @return int, int  (bln1, bln2) inclusive body line range
 function M.get_node_range(bnodes, levels, tlnum, total_body_lines)
+  -- Guard: tlnum must be a valid index in both parallel arrays.
+  if tlnum < 1 or tlnum > #levels then return nil, nil end
+
   local idx = tlnum -- levels/bnodes index = tree line (direct mapping)
   local bln1 = bnodes[idx]
   local cur_level = levels[idx]
@@ -174,7 +177,7 @@ end
 -- @return int    number of subnodes (0 if leaf or last node)
 function M.count_subnodes(levels, tlnum)
   local idx = tlnum -- direct mapping: tree line k = levels[k]
-  if idx >= #levels then
+  if idx < 1 or idx >= #levels then
     return 0
   end
 

@@ -1558,7 +1558,8 @@ function M.update(body_buf)
   -- current width rather than the configured default (they differ after the
   -- user resizes the panel).
   local tree_buf   = state.get_tree(body_buf)
-  local tree_win   = tree_buf and find_win_for_buf(tree_buf)
+  if not tree_buf or not vim.api.nvim_buf_is_valid(tree_buf) then return end
+  local tree_win   = find_win_for_buf(tree_buf)
   local max_cols   = tree_win and vim.api.nvim_win_get_width(tree_win) or tree_width()
   local tree_lines = build_tree_lines(outline, max_cols)
   write_lines(tree_buf, tree_lines)

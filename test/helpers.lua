@@ -298,6 +298,32 @@ function H.assert_outline_levels(body_buf, expected_levels)
   expect.equality(outline.levels, expected_levels)
 end
 
+--- Assert that the outline stored for `body_buf` is internally consistent:
+--- bnodes, levels, and tlines are all present and parallel (same length),
+--- every bnode points to a valid body line, and every level is in [1, 6].
+---
+--- This is a test-only assertion — production code uses silent guards instead
+--- (see state.register / state.set_outline).
+function H.assert_outline_consistency(body_buf)
+  local state = require("voom.state")
+  local outline = state.get_outline(body_buf)
+  expect.equality(outline ~= nil, true)
+  expect.equality(#outline.bnodes, #outline.levels)
+
+  local line_count = vim.api.nvim_buf_line_count(body_buf)
+  for i, bn in ipairs(outline.bnodes) do
+    -- Each bnode must point to a valid body line.
+    expect.equality(bn >= 1 and bn <= line_count, true)
+    -- Levels must be in the Markdown-supported range.
+    expect.equality(outline.levels[i] >= 1 and outline.levels[i] <= 6, true)
+  end
+
+  -- bnodes must be strictly increasing (headings appear in document order).
+  for i = 2, #outline.bnodes do
+    expect.equality(outline.bnodes[i] > outline.bnodes[i - 1], true)
+  end
+end
+
 --- Combined assertion for the common post-mutation contract: focus stays in
 --- tree, cursor is at `tree_lnum`, snLn matches, and changedtick is synced
 --- and changed from `before_tick`.

@@ -33,6 +33,14 @@ M.bodies = {}
 -- @param mode      string   markup mode name (e.g. "markdown")
 -- @param outline   table    return value of mode.make_outline()
 function M.register(body_buf, tree_buf, mode, outline)
+  -- Core invariant: bnodes and levels must be parallel arrays of equal length.
+  -- A mismatch would violate the tree-line-k ↔ bnodes[k]/levels[k] contract
+  -- that every consumer depends on.  Silent no-op on violation.
+  if not outline.bnodes or not outline.levels
+    or #outline.bnodes ~= #outline.levels then
+    return
+  end
+
   M.trees[tree_buf] = body_buf
   M.bodies[body_buf] = {
     tree        = tree_buf,
@@ -109,6 +117,11 @@ end
 function M.set_outline(body_buf, outline)
   local entry = M.bodies[body_buf]
   if not entry then return end
+  -- Same parallel-array invariant as register(): silent no-op on mismatch.
+  if not outline.bnodes or not outline.levels
+    or #outline.bnodes ~= #outline.levels then
+    return
+  end
   entry.bnodes = outline.bnodes
   entry.levels = outline.levels
   -- Update style preferences when available (they may change if the user
