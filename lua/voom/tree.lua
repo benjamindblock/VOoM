@@ -1088,8 +1088,6 @@ end
 -- the tree keymaps.  We avoid clobbering more keys in the body because it
 -- is the user's primary editing buffer.
 function M.setup_body_keymaps(body_buf, tree_buf)
-  local opts = { noremap = true, silent = true }
-
   vim.api.nvim_buf_set_keymap(body_buf, "n", "<CR>", "", {
     noremap  = true,
     silent   = true,
@@ -1110,10 +1108,6 @@ function M.setup_body_keymaps(body_buf, tree_buf)
       end
     end,
   })
-
-  -- Suppress Lua "unused variable" warning: opts is used by nvim_buf_set_keymap
-  -- calls above but assigned before the conditional callbacks.
-  _ = opts
 end
 
 -- ==============================================================================
