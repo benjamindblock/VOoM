@@ -1293,6 +1293,41 @@ T["sort"]["sorts sibling group under the current parent and keeps ancestors inta
   MiniTest.expect.equality(vim.api.nvim_win_get_cursor(tree_win)[1], 2)
 end
 
+T["sort"]["normalises blank separators when the last sibling is reordered"] = function()
+  local tree_mod = require("voom.tree")
+  local oop = require("voom.oop")
+
+  -- "# B" is the original first sibling (non-last) and owns the trailing blank
+  -- that separates it from "# A".  "# A" is the original last sibling and has
+  -- no trailing blank.  After alphabetical sort A becomes first (non-last) and
+  -- B becomes last; A must gain a blank separator so sections remain properly
+  -- separated.
+  local buf = H.make_scratch_buf({
+    "# B",
+    "body b",
+    "",
+    "# A",
+    "body a",
+  }, "sort_sep_blanks.md")
+  vim.api.nvim_set_current_buf(buf)
+  local tree_buf = tree_mod.create(buf, "markdown")
+  local tree_win = H.find_win_for_buf(tree_buf)
+
+  vim.api.nvim_set_current_win(tree_win)
+  vim.api.nvim_win_set_cursor(tree_win, { 1, 0 })
+
+  oop.sort(buf, "")
+
+  MiniTest.expect.equality(vim.api.nvim_buf_get_lines(buf, 0, -1, false), {
+    "# A",
+    "body a",
+    "",
+    "# B",
+    "body b",
+    "",
+  })
+end
+
 -- ==============================================================================
 -- state.outline_state
 -- ==============================================================================

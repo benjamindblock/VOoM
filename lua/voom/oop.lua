@@ -1284,6 +1284,24 @@ function M.sort(body_buf, args_string)
     return
   end
 
+  -- Detect whether the sibling group uses blank-line separators *between*
+  -- siblings (blank at the trailing end of a chunk's body_lines) before we
+  -- reorder them.  When separator-style blanks are present we normalise every
+  -- inter-chunk boundary in the sorted output to exactly one blank line, so
+  -- that reordering cannot leave two adjacent headings without a separator.
+  --
+  -- Documents that place blanks *inside* sections (blank after heading rather
+  -- than after the body) produce no trailing blanks on non-last chunks and are
+  -- left untouched.
+  local use_separator_blanks = false
+  for i = 1, #chunks - 1 do
+    local bl = chunks[i].body_lines
+    if #bl > 0 and bl[#bl]:match("^%s*$") then
+      use_separator_blanks = true
+      break
+    end
+  end
+
   -- Sort the chunks.
   if opts.shuffle then
     -- Fisher-Yates shuffle.
@@ -1318,9 +1336,26 @@ function M.sort(body_buf, args_string)
 
   -- Collect all sorted body lines.
   local sorted_lines = {}
-  for _, chunk in ipairs(chunks) do
-    for _, line in ipairs(chunk.body_lines) do
-      table.insert(sorted_lines, line)
+  for i, chunk in ipairs(chunks) do
+    local is_last = (i == #chunks)
+    if use_separator_blanks and not is_last then
+      -- Strip trailing blanks from this chunk and emit exactly one blank
+      -- separator so every inter-chunk boundary is consistently normalised.
+      local last_content = #chunk.body_lines
+      while last_content > 1 and chunk.body_lines[last_content]:match("^%s*$") do
+        last_content = last_content - 1
+      end
+      for j = 1, last_content do
+        table.insert(sorted_lines, chunk.body_lines[j])
+      end
+      table.insert(sorted_lines, "")
+    else
+      -- No separator normalisation: append verbatim.  The last chunk is always
+      -- preserved as-is so its trailing content (e.g. blank before the next
+      -- non-sibling node) is not disturbed.
+      for _, line in ipairs(chunk.body_lines) do
+        table.insert(sorted_lines, line)
+      end
     end
   end
 
