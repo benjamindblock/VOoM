@@ -203,15 +203,6 @@ end
 
 local find_win_for_buf = tree_utils.find_win_for_buf
 
--- Re-parse the body buffer, update state, refresh the tree display, and
--- sync the stored changedtick to prevent redundant re-parses from the
--- BufEnter autocommand.
-local function refresh_after_edit(body_buf)
-  tree.update(body_buf)
-  local tick = vim.api.nvim_buf_get_changedtick(body_buf)
-  state.set_changedtick(body_buf, tick)
-end
-
 -- Write `lines` (a Lua table) into the body buffer, replacing all content.
 -- Each OOP command should create its own undo step in the body undo tree.
 local function write_body(body_buf, lines)
@@ -272,6 +263,62 @@ local function body_line_end(bnodes, ln_end, total_body)
     return bnodes[ln_end + 1] - 1
   end
   return total_body
+end
+
+-- Post-write coordinator: handles phases 4–6 of the OOP flow.
+--
+-- Phase 4 — re-parse the body buffer, update state, refresh the tree
+-- display, and sync the stored changedtick to prevent redundant re-parses
+-- from the BufEnter autocommand.
+--
+-- Phase 5 — restore selection and cursor.  When `result` carries a
+-- `target_tlnum`, the coordinator clamps it to the refreshed outline range
+-- and updates both snLn and the tree-window cursor.  When `target_tlnum` is
+-- nil but `target_body_lnum` is present, the coordinator resolves the tree
+-- line by looking up the body line in the refreshed outline (used by
+-- insert_node, whose new heading's tree position is only known after
+-- refresh).  When `focus` is "body", the coordinator transfers focus to the
+-- body window and places the cursor at `body_cursor`.
+--
+-- Phase 6 — optional status echo.  When `result.echo` is non-nil, the
+-- coordinator calls nvim_echo with the provided chunks.
+--
+-- @param body_buf  number        body buffer
+-- @param tree_win  number|nil    tree window handle (nil skips phases 5–6)
+-- @param result    OopResult|nil post-edit result (nil performs refresh only)
+local function refresh_after_edit(body_buf, tree_win, result)
+  -- Phase 4: refresh outline and tree, sync changedtick.
+  tree.update(body_buf)
+  local tick = vim.api.nvim_buf_get_changedtick(body_buf)
+  state.set_changedtick(body_buf, tick)
+
+  if not result then return end
+
+  -- Phase 5: restore selection and cursor.
+  local target = result.target_tlnum
+  if not target and result.target_body_lnum then
+    target = tree_lnum_after_refresh(body_buf, result.target_body_lnum)
+  end
+  if target then
+    local outline = state.get_outline(body_buf)
+    if outline then
+      target = math.max(1, math.min(target, #outline.bnodes))
+    end
+    select_node(body_buf, tree_win, target)
+  end
+
+  if result.focus == "body" and result.body_cursor then
+    local body_win = find_win_for_buf(body_buf)
+    if body_win then
+      vim.api.nvim_set_current_win(body_win)
+      vim.api.nvim_win_set_cursor(body_win, result.body_cursor)
+    end
+  end
+
+  -- Phase 6: echo.
+  if result.echo then
+    vim.api.nvim_echo(result.echo, true, {})
+  end
 end
 
 -- Resolve the shared context for any tree-initiated command.
@@ -443,34 +490,23 @@ function M.insert_node(tree_buf, as_child)
   -- Insert into the body buffer.
   vim.api.nvim_buf_set_lines(ctx.body_buf, bln_insert, bln_insert, false, body_lines)
 
-  -- Refresh the tree to reflect the new heading.
-  refresh_after_edit(ctx.body_buf)
-
-  -- Position the tree cursor on the new node, then jump to body to edit.
   -- The new heading's body line is bln_insert + offset (accounting for
   -- any blank separator that new_headline may have prepended).
   local new_bln = bln_insert + 1
-  -- If a blank line was prepended, the actual heading is one line further.
   if #body_lines > 0 and body_lines[1] == "" then
     new_bln = new_bln + 1
   end
 
-  -- Find the new tree line for this heading by looking up new_bln in the
-  -- refreshed outline (direct mapping: tree line = bnodes index).
-  local new_tlnum = tree_lnum_after_refresh(ctx.body_buf, new_bln)
-  if new_tlnum then
-    select_node(ctx.body_buf, ctx.tree_win, new_tlnum)
-  end
+  -- Compute the body cursor position for the "NewHeadline" placeholder
+  -- before refresh, since the body content is already written.
+  local line = vim.api.nvim_buf_get_lines(ctx.body_buf, new_bln - 1, new_bln, false)[1] or ""
+  local col_start = line:find("NewHeadline")
 
-  -- Jump to the body and position cursor on the "NewHeadline" text.
-  -- The user can use `ciw` or similar to replace the placeholder.
-  local body_win = find_win_for_buf(ctx.body_buf)
-  if body_win then
-    vim.api.nvim_set_current_win(body_win)
-    local line = vim.api.nvim_buf_get_lines(ctx.body_buf, new_bln - 1, new_bln, false)[1] or ""
-    local col_start = line:find("NewHeadline")
-    vim.api.nvim_win_set_cursor(body_win, { new_bln, col_start and (col_start - 1) or 0 })
-  end
+  refresh_after_edit(ctx.body_buf, ctx.tree_win, {
+    target_body_lnum = new_bln,
+    focus = "body",
+    body_cursor = { new_bln, col_start and (col_start - 1) or 0 },
+  })
 end
 
 -- ==============================================================================
@@ -606,25 +642,15 @@ function M.cut_node(tree_buf)
 
   -- Write back to buffer.
   write_body(ctx.body_buf, all_lines)
-  refresh_after_edit(ctx.body_buf)
-
-  -- Position cursor on the node above the deleted range, clamped to valid range.
-  local target_tlnum = math.max(1, tlnum - 1)
-  local new_outline = state.get_outline(ctx.body_buf)
-  if new_outline then
-    target_tlnum = math.min(target_tlnum, #new_outline.bnodes)
-  end
-
-  select_node(ctx.body_buf, ctx.tree_win, target_tlnum)
 
   local node_count = #cut_levels
-  vim.api.nvim_echo(
-    {
+  refresh_after_edit(ctx.body_buf, ctx.tree_win, {
+    target_tlnum = math.max(1, tlnum - 1),
+    focus = "tree",
+    echo = {
       { string.format("VOoM: cut %d node%s", node_count, node_count == 1 and "" or "s"), "Normal" },
     },
-    true,
-    {}
-  )
+  })
 end
 
 -- ==============================================================================
@@ -785,17 +811,11 @@ function M.paste_node(tree_buf)
 
   -- Write back.
   write_body(ctx.body_buf, all_lines)
-  refresh_after_edit(ctx.body_buf)
 
-  -- Position cursor on the first pasted node.
-  -- tlnum1 is already a direct tree line (bnodes index = tree line; no root offset).
-  local new_tlnum = tlnum1
-  local new_outline = state.get_outline(ctx.body_buf)
-  if new_outline then
-    new_tlnum = math.min(new_tlnum, #new_outline.bnodes)
-  end
-
-  select_node(ctx.body_buf, ctx.tree_win, new_tlnum)
+  refresh_after_edit(ctx.body_buf, ctx.tree_win, {
+    target_tlnum = tlnum1,
+    focus = "tree",
+  })
 end
 
 -- ==============================================================================
@@ -923,10 +943,11 @@ function M.move_up(tree_buf)
 
   -- Write back.
   write_body(ctx.body_buf, all_lines)
-  refresh_after_edit(ctx.body_buf)
 
-  -- Position cursor: the moved node is now at tree line lnUp1 (direct mapping).
-  select_node(ctx.body_buf, ctx.tree_win, lnUp1)
+  refresh_after_edit(ctx.body_buf, ctx.tree_win, {
+    target_tlnum = lnUp1,
+    focus = "tree",
+  })
 end
 
 -- ==============================================================================
@@ -1061,10 +1082,11 @@ function M.move_down(tree_buf)
 
   -- Write back.
   write_body(ctx.body_buf, all_lines)
-  refresh_after_edit(ctx.body_buf)
 
-  -- Position cursor at new location (new_snLn_idx is already a tree line).
-  select_node(ctx.body_buf, ctx.tree_win, new_snLn_idx)
+  refresh_after_edit(ctx.body_buf, ctx.tree_win, {
+    target_tlnum = new_snLn_idx,
+    focus = "tree",
+  })
 end
 
 -- ==============================================================================
@@ -1138,10 +1160,11 @@ function M.promote(tree_buf)
 
   -- Write back.
   write_body(ctx.body_buf, all_lines)
-  refresh_after_edit(ctx.body_buf)
 
-  -- Keep cursor on the same node.
-  select_node(ctx.body_buf, ctx.tree_win, tlnum)
+  refresh_after_edit(ctx.body_buf, ctx.tree_win, {
+    target_tlnum = tlnum,
+    focus = "tree",
+  })
 end
 
 -- ==============================================================================
@@ -1226,10 +1249,11 @@ function M.demote(tree_buf)
 
   -- Write back.
   write_body(ctx.body_buf, all_lines)
-  refresh_after_edit(ctx.body_buf)
 
-  -- Keep cursor on the same node.
-  select_node(ctx.body_buf, ctx.tree_win, tlnum)
+  refresh_after_edit(ctx.body_buf, ctx.tree_win, {
+    target_tlnum = tlnum,
+    focus = "tree",
+  })
 end
 
 -- ==============================================================================
@@ -1386,20 +1410,23 @@ function M.sort(body_buf, args_string)
 
   -- Replace in buffer.
   vim.api.nvim_buf_set_lines(body_buf, orig_bln1 - 1, orig_bln2, false, sorted_lines)
-  refresh_after_edit(body_buf)
 
-  -- Keep the same root node selected after sorting.
+  -- Track the selected node through the reorder so the cursor stays on it.
+  local target_tlnum
   if selected_chunk then
-    local selected_tlnum = first_sib
+    target_tlnum = first_sib
     for _, chunk in ipairs(chunks) do
       if chunk == selected_chunk then
         break
       end
-      selected_tlnum = selected_tlnum + #chunk.levels_slice
+      target_tlnum = target_tlnum + #chunk.levels_slice
     end
-
-    select_node(body_buf, tree_win, selected_tlnum)
   end
+
+  refresh_after_edit(body_buf, tree_win, {
+    target_tlnum = target_tlnum,
+    focus = "tree",
+  })
 end
 
 return M

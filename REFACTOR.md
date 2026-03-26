@@ -132,17 +132,21 @@ The public plugin API, commands, keymaps, and user-visible behavior must remain 
 - Command-specific structure preserved: each command still visibly expresses its own mutation logic, selection policy, and follow-up behavior.
 - All 192 contract tests pass with zero failures.
 
-8. **Extend `refresh_after_edit` into a full post-write coordinator**
-- `refresh_after_edit(body_buf)` already exists as a local function in `oop.lua` (line 114), handling `tree.update` and `changedtick` sync. Extend it rather than creating a new coordinator.
-- Add support for the remaining post-write mechanics:
-  - Post-refresh tree-line resolution when selection must move.
-  - Tree cursor restoration.
-  - Optional body cursor restoration and focus transfer.
-- Keep per-command finalize behavior local where semantics differ:
-  - Commands that keep the same node selected should say so explicitly.
-  - Commands that move selection to a new node should compute and pass the target policy explicitly.
-  - Commands that jump into the body and place the cursor on placeholder text should keep that final targeting local to the command, while still using the shared refresh coordinator.
-- Preserve current behavior exactly, including focus changes and cursor placement.
+8. **Extend `refresh_after_edit` into a full post-write coordinator** — COMPLETE
+- Extended `refresh_after_edit(body_buf, tree_win, result)` to handle phases 4–6 of the OOP flow:
+  - Phase 4: tree refresh and changedtick sync (unchanged).
+  - Phase 5: selection restoration via `target_tlnum` (clamped to valid range) or `target_body_lnum` (post-refresh lookup); optional body focus transfer via `focus == "body"` and `body_cursor`.
+  - Phase 6: optional status echo via `result.echo`.
+- All nine commands migrated to pass an `OopResult` table to the coordinator:
+  - `insert_node`: uses `target_body_lnum` for post-refresh tree-line resolution, `focus = "body"` with `body_cursor` for NewHeadline placeholder targeting.
+  - `cut_node`: uses `target_tlnum` (clamped) with `echo` for node count feedback.
+  - `paste_node`: uses `target_tlnum` (clamped).
+  - `move_up`, `move_down`: use `target_tlnum` for the moved node's new position.
+  - `promote`, `demote`: use `target_tlnum` to keep cursor on the same node.
+  - `sort`: uses `target_tlnum` tracked through chunk reorder (nil when no selection).
+- Command-specific mutation logic, selection policy computation, and body cursor targeting remain local to each command.
+- Internal helper ordering in `oop.lua` adjusted: `select_node` and `tree_lnum_after_refresh` are now defined before the coordinator that calls them.
+- All 192 contract tests pass with zero failures.
 
 9. **Refactor tree-context structural edits incrementally**
 - Refactor `insert`, `cut`, `copy`, `paste`, `move_up`, `move_down`, `promote`, and `demote` one command at a time.
