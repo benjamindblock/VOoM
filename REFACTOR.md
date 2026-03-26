@@ -92,13 +92,15 @@ The public plugin API, commands, keymaps, and user-visible behavior must remain 
 - Contract is private to `oop.lua` — not exposed through `voom.oop`, `voom.state`, or any other public API.
 - All 192 contract tests pass with zero failures.
 
-5. **Separate OOP operations into real families before refactoring internals**
-- Split the refactor mentally and in code into:
-  - Tree-context structural edits: `insert`, `cut`, `copy`, `paste`, `move_up`, `move_down`, `promote`, `demote`.
-  - Tree-context read-only navigation: `edit_node`, which does not mutate the body but should follow consistent patterns for context resolution and focus management.
-  - Buffer-context sort: `sort`, which accepts either a body or tree buffer and should not be forced into the same entry contract as tree-initiated edits.
-- Reuse shared helpers only where the operation families are genuinely aligned.
-- Do not introduce a single universal context object if it creates more special cases than it removes.
+5. **Separate OOP operations into real families before refactoring internals** — COMPLETE
+- Three operation families separated in `oop.lua` with dedicated section headers:
+  - **Tree-context read-only navigation**: `edit_node` — resolves tree context and transfers focus without mutating buffers.
+  - **Tree-context structural edits**: `insert_node`, `cut_node`, `copy_node`, `paste_node`, `move_up`, `move_down`, `promote`, `demote` — all mutate the body through the tree panel following the six-phase flow.
+  - **Buffer-context sort**: `sort` — accepts either a body or tree buffer and keeps its own context resolution path.
+- Added shared `resolve_tree_ctx(tree_buf)` helper that resolves body_buf, outline, tree_win, tlnum, and total_body — used by all tree-initiated commands (both navigation and structural edits).
+- Mutating commands resolve outline_state and mode locally because their nil-check policies differ per command (some guard at the call site, others early-return). This avoids introducing a universal context object that would create more special cases than it removes.
+- `sort` retains its own entry path (resolves body from tree, looks up tree_buf from body).
+- All 192 contract tests pass with zero failures after migration.
 
 6. **Extract shared read-only helpers for derived tree data**
 - Centralize repeated logic that derives user-visible tree data without mutating state:
