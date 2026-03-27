@@ -105,13 +105,12 @@ Opening `nvim-voom` splits the window with a narrow tree pane on the left
 Indentation depth mirrors heading level:
 
 ```
-  |sample.md
-  |Introduction
-  . |Installation
-  . . |Requirements
-  . . |Platform Notes
-  . |Usage
-  |Advanced Topics
+ ▾ Introduction
+   ▾ Installation
+     · Requirements
+     · Platform Notes
+   · Usage
+ · Advanced Topics
 ```
 
 The tree is read-only. It refreshes automatically whenever the body buffer is
