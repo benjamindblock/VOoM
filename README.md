@@ -26,6 +26,9 @@ Plug 'benjamindblock/nvim-voom'
 
 Any Neovim package manager that adds the plugin to `runtimepath` will work.
 
+## Screenshot
+<img width="927" height="520" alt="Screenshot 2026-03-27 at 11 02 51 AM" src="https://github.com/user-attachments/assets/15b76c8b-1326-4c8d-a3b5-cb440289c5a2" />
+
 ## Configuration
 
 Call `require("voom").setup({...})` anywhere in your init file after the
