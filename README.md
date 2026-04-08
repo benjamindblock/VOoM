@@ -88,6 +88,21 @@ works without any explicit configuration.
 
 `:Voom` and `:VoomToggle` support command-line completion for mode names.
 
+### Auto-open for specific filetypes
+
+To have the outline tree open automatically whenever you edit a particular
+filetype, add a `FileType` autocommand. For example, to activate it for
+Markdown files:
+
+```lua
+vim.api.nvim_create_autocmd("FileType", {
+  pattern  = "markdown",
+  callback = function()
+    vim.cmd("Voom")
+  end,
+})
+```
+
 ## Supported markup modes
 
 | Mode       | Trigger                         | Heading styles supported              |
