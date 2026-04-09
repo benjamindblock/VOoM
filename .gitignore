@@ -6,3 +6,6 @@
 
 # Intermediate/comparison artifacts
 tmp/
+
+# Git worktrees
+.worktrees/
