@@ -1462,10 +1462,12 @@ function M.create(body_buf, mode_name)
   -- surfaces programming mistakes rather than user input errors.
   assert(mode, "unknown mode: " .. tostring(mode_name))
 
-  -- Parse the body buffer contents.
+  -- Parse the body buffer contents.  Pass body_buf as the optional third
+  -- argument so TS-backed modes can use the live buffer's incremental parse
+  -- cache instead of creating a temporary scratch buffer.
   local buf_name = vim.api.nvim_buf_get_name(body_buf)
   local lines    = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
-  local outline  = mode.make_outline(lines, buf_name)
+  local outline  = mode.make_outline(lines, buf_name, body_buf)
 
   -- Build the display line list (headings only; filename lives in the winbar).
   -- The window does not exist yet at this point, so we use the configured
@@ -1575,9 +1577,11 @@ function M.update(body_buf)
   local mode      = mode_name and modes.get(mode_name)
   if not mode then return end
 
+  -- Reuse the live body buffer when available so TS-backed modes can update
+  -- from Neovim's incremental parse state instead of reparsing scratch text.
   local buf_name = vim.api.nvim_buf_get_name(body_buf)
   local lines    = vim.api.nvim_buf_get_lines(body_buf, 0, -1, false)
-  local outline  = mode.make_outline(lines, buf_name)
+  local outline  = mode.make_outline(lines, buf_name, body_buf)
 
   -- Resolve the tree window early so we can truncate headings to its actual
   -- current width rather than the configured default (they differ after the
