@@ -821,6 +821,21 @@ function M.tree_toggle_fold(tree_buf)
   M.apply_fold_indicators(tree_buf, state.get_body(tree_buf))
 end
 
+-- Run a built-in fold command inside the tree window, then refresh the
+-- indicator extmarks so native `z*` folding stays visually in sync.
+local function run_tree_fold_command(tree_buf, keys)
+  local tree_win = find_win_for_buf(tree_buf)
+  if not tree_win then return end
+
+  pcall(function()
+    vim.api.nvim_win_call(tree_win, function()
+      vim.cmd("normal! " .. keys)
+    end)
+  end)
+
+  M.apply_fold_indicators(tree_buf, state.get_body(tree_buf))
+end
+
 -- Move the tree cursor to snLn (the last body-selected node), restoring
 -- the "selected" position after the user has moved the tree cursor away.
 function M.tree_goto_selected(tree_buf)
@@ -1123,6 +1138,16 @@ end
 function M.set_keymaps(tree_buf, body_buf)
   local opts = { noremap = true, silent = true }
 
+  local function map_native_fold(lhs, rhs)
+    vim.api.nvim_buf_set_keymap(tree_buf, "n", lhs, "", {
+      noremap = true,
+      silent = true,
+      callback = function()
+        run_tree_fold_command(tree_buf, rhs)
+      end,
+    })
+  end
+
   -- <CR> / gO: navigate to the heading corresponding to the cursor line.
   -- gO mirrors the body-pane binding so the key is reciprocal: gO in the body
   -- jumps to the outline node; gO in the tree jumps back to the heading.
@@ -1200,6 +1225,18 @@ function M.set_keymaps(tree_buf, body_buf)
     noremap = true, silent = true,
     callback = function() M.tree_toggle_fold(tree_buf) end,
   })
+  map_native_fold("za", "za")
+  map_native_fold("zc", "zc")
+  map_native_fold("zo", "zo")
+  map_native_fold("zC", "zC")
+  map_native_fold("zO", "zO")
+  map_native_fold("zx", "zx")
+  map_native_fold("zX", "zX")
+  map_native_fold("zv", "zv")
+  map_native_fold("zm", "zm")
+  map_native_fold("zr", "zr")
+  map_native_fold("zM", "zM")
+  map_native_fold("zR", "zR")
 
   -- 'c' contracts siblings; 'C' is intentionally not a separate binding —
   -- using uppercase C for contract keeps muscle memory consistent with

@@ -526,6 +526,38 @@ T["render_count_badges - integration"]["badge appears on collapsed parent"] = fu
   MiniTest.expect.equality(vt[1][2], "VoomBadge")
 end
 
+T["render_count_badges - integration"]["native zc/zo refresh fold icons"] = function()
+  local tree_buf = T["render_count_badges - integration"]._tree
+  local tree_win = (function()
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == tree_buf then return w end
+    end
+  end)()
+  local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
+
+  vim.api.nvim_win_call(tree_win, function()
+    vim.api.nvim_win_set_cursor(tree_win, { 1, 0 })
+    vim.cmd("normal zc")
+  end)
+
+  local closed = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {
+    details = true,
+  })
+  MiniTest.expect.equality(closed[1][4].virt_text[1][1], "▶")
+  MiniTest.expect.equality(closed[1][4].virt_text[1][2], "VoomFoldClosed")
+
+  vim.api.nvim_win_call(tree_win, function()
+    vim.api.nvim_win_set_cursor(tree_win, { 1, 0 })
+    vim.cmd("normal zo")
+  end)
+
+  local open = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {
+    details = true,
+  })
+  MiniTest.expect.equality(open[1][4].virt_text[1][1], "▾")
+  MiniTest.expect.equality(open[1][4].virt_text[1][2], "VoomFoldOpen")
+end
+
 T["render_count_badges - integration"]["badge absent after re-opening fold"] = function()
   local tree     = require("voom.tree")
   local body_buf = T["render_count_badges - integration"]._body
