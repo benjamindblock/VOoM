@@ -1,31 +1,24 @@
--- Golden-master tests for the Treesitter Markdown parser.
+-- Snapshot tests for the Treesitter Markdown parser.
 --
--- Phase 1 / WI-1: these tests are intentionally RED until WI-2 through WI-4
--- implement the TS engine and query.  They establish the contract: the TS
--- parser must produce output identical to the existing regex parser for every
--- Markdown fixture.
---
--- Once WI-2–WI-4 are complete the tests will go green; they then serve as the
--- regression safety net for the Phase 2 registry switch (WI-6).
+-- These snapshots were generated from the regex parser's output on each
+-- fixture.  They are now frozen — the TS parser must match them exactly.
+-- This preserves the regression safety net after the regex parser is
+-- deleted (WI-16).
 
 local H = dofile("test/helpers.lua")
 
 local T = MiniTest.new_set()
 
 -- ==============================================================================
--- Helper: load the TS mode (fails gracefully so we get readable test errors)
+-- Helper: load the TS mode
 -- ==============================================================================
 
 local function get_ts_mode()
-  local ok, ts = pcall(require, "voom.ts")
-  if not ok then
-    error("voom.ts not found — implement WI-2 first: " .. tostring(ts))
-  end
-  return ts.build_mode("markdown")
+  return require("voom.ts").build_mode("markdown")
 end
 
 -- ==============================================================================
--- TS engine unit tests (also red in WI-1 phase)
+-- TS engine unit tests
 -- ==============================================================================
 
 T["ts engine"] = MiniTest.new_set()
@@ -85,47 +78,119 @@ T["ts engine"]["document with no headings produces empty outline"] = function()
 end
 
 -- ==============================================================================
--- Golden-master tests: TS output must match regex parser for every fixture
+-- Frozen snapshots (generated from the regex parser's final output)
 -- ==============================================================================
 
--- Compare TS parser output against the regex parser for a given fixture file.
--- Asserts that bnodes, levels, tlines, use_hash, and use_close_hash all match.
-local function golden_master_check(fixture_name)
+local snapshots = {}
+
+-- Snapshot for sample.md
+snapshots["sample.md"] = {
+  bnodes = { 1, 6, 10, 16, 20, 24, 28, 34, 40, 45 },
+  levels = { 1, 2, 3, 3, 2, 1, 1, 2, 2, 6 },
+  tlines = {
+    " · Project Overview",
+    "   · Installation",
+    "     · Requirements",
+    "     · Platform Notes",
+    "   · Usage",
+    " · Advanced Topics",
+    " · Underline Level One",
+    "   · Underline Level Two",
+    "   · Mixed Hash Section",
+    "           · Deep Heading",
+  },
+  use_hash = true,
+  use_close_hash = false,
+}
+
+-- Snapshot for edge_cases.md
+snapshots["edge_cases.md"] = {
+  bnodes = { 3, 5, 7, 9, 11, 13, 16, 19 },
+  levels = { 1, 2, 3, 4, 2, 1, 2, 1 },
+  tlines = {
+    " · Root",
+    "   · Child One",
+    "     · Grandchild",
+    "       · Great Grandchild",
+    "   · Empty Child",
+    " · Setext Parent",
+    "   · Setext Child",
+    " · Tail",
+  },
+  use_hash = true,
+  use_close_hash = false,
+}
+
+-- Snapshot for readme_outline.md
+snapshots["readme_outline.md"] = {
+  bnodes = { 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29 },
+  levels = { 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 2, 2, 2 },
+  tlines = {
+    " · nvim-voom",
+    "   · Installation",
+    "   · Commands",
+    "   · Supported markup modes",
+    "   · Tree pane",
+    "   · Keymaps — tree pane",
+    "     · Navigation",
+    "     · Folding",
+    "     · Display",
+    "     · Editing",
+    "   · Keymaps — body pane",
+    "   · Live cursor-follow",
+    "   · VoomGrep",
+    "   · VoomSort",
+    "   · Development",
+  },
+  use_hash = true,
+  use_close_hash = false,
+}
+
+-- Snapshot for session_outline.md
+snapshots["session_outline.md"] = {
+  bnodes = { 1, 3 },
+  levels = { 1, 2 },
+  tlines = {
+    " · VOoM Session Notes",
+    "   · Bugs / Issues / Missing Features",
+  },
+  use_hash = true,
+  use_close_hash = false,
+}
+
+-- ==============================================================================
+-- Snapshot comparison tests
+-- ==============================================================================
+
+local function snapshot_check(fixture_name)
   local lines   = H.load_fixture(fixture_name)
-  local regex   = require("voom.modes.markdown")
   local ts_mode = get_ts_mode()
-
-  local expected = regex.make_outline(lines, fixture_name)
   local actual   = ts_mode.make_outline(lines, fixture_name)
+  local expected = snapshots[fixture_name]
 
-  MiniTest.expect.equality(actual.bnodes,          expected.bnodes,
-    fixture_name .. ": bnodes mismatch")
-  MiniTest.expect.equality(actual.levels,          expected.levels,
-    fixture_name .. ": levels mismatch")
-  MiniTest.expect.equality(actual.tlines,          expected.tlines,
-    fixture_name .. ": tlines mismatch")
-  MiniTest.expect.equality(actual.use_hash,        expected.use_hash,
-    fixture_name .. ": use_hash mismatch")
-  MiniTest.expect.equality(actual.use_close_hash,  expected.use_close_hash,
-    fixture_name .. ": use_close_hash mismatch")
+  MiniTest.expect.equality(actual.bnodes,         expected.bnodes)
+  MiniTest.expect.equality(actual.levels,         expected.levels)
+  MiniTest.expect.equality(actual.tlines,         expected.tlines)
+  MiniTest.expect.equality(actual.use_hash,       expected.use_hash)
+  MiniTest.expect.equality(actual.use_close_hash, expected.use_close_hash)
 end
 
-T["golden-master"] = MiniTest.new_set()
+T["snapshots"] = MiniTest.new_set()
 
-T["golden-master"]["sample.md"] = function()
-  golden_master_check("sample.md")
+T["snapshots"]["sample.md"] = function()
+  snapshot_check("sample.md")
 end
 
-T["golden-master"]["edge_cases.md"] = function()
-  golden_master_check("edge_cases.md")
+T["snapshots"]["edge_cases.md"] = function()
+  snapshot_check("edge_cases.md")
 end
 
-T["golden-master"]["readme_outline.md"] = function()
-  golden_master_check("readme_outline.md")
+T["snapshots"]["readme_outline.md"] = function()
+  snapshot_check("readme_outline.md")
 end
 
-T["golden-master"]["session_outline.md"] = function()
-  golden_master_check("session_outline.md")
+T["snapshots"]["session_outline.md"] = function()
+  snapshot_check("session_outline.md")
 end
 
 return T
