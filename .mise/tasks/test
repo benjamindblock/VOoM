@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Run the full test suite in Docker with all TS parsers"
+set -euo pipefail
+
+docker build -q -t nvim-voom-test -f Dockerfile . >/dev/null
+docker run --rm -v "$PWD:/plugin:ro" -w /plugin nvim-voom-test \
+  nvim --headless --noplugin \
+    -u test/minimal_init.lua \
+    -c "lua MiniTest.run()" \
+    -c "qa!"

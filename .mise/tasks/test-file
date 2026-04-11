@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Run a single test file in Docker"
+# usage: mise run test-file <spec-path>
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+  echo "Usage: mise run test-file test/spec/voom_spec.lua" >&2
+  exit 1
+fi
+
+docker build -q -t nvim-voom-test -f Dockerfile . >/dev/null
+docker run --rm -v "$PWD:/plugin:ro" -w /plugin nvim-voom-test \
+  nvim --headless --noplugin \
+    -u test/minimal_init.lua \
+    -c "lua MiniTest.run_file('$1')" \
+    -c "qa!"
