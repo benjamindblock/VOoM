@@ -296,7 +296,7 @@ T["grep"]["warns on no matches and leaves quickfix empty"] = function()
   MiniTest.expect.equality(#qf, 0)
   MiniTest.expect.equality(#notifications, 1)
   MiniTest.expect.equality(notifications[1].level, vim.log.levels.WARN)
-  MiniTest.expect.equality(notifications[1].msg, "VOoM grep: no headings matched 'Z+'")
+  MiniTest.expect.equality(notifications[1].msg, "nvim-voom grep: no headings matched 'Z+'")
 end
 
 -- ==============================================================================
@@ -335,7 +335,7 @@ T["voominfo"]["reports mode node count selected line and heading text"] = functi
   MiniTest.expect.equality(notifications[1].msg:find("node:%s+Beta") ~= nil, true)
 end
 
-T["voominfo"]["errors when current buffer has no active VOoM tree"] = function()
+T["voominfo"]["errors when current buffer has no active nvim-voom tree"] = function()
   local voom = require("voom")
   local buf = H.make_scratch_buf({ "plain text" }, "voominfo_error.txt")
 
@@ -346,7 +346,7 @@ T["voominfo"]["errors when current buffer has no active VOoM tree"] = function()
 
   MiniTest.expect.equality(#notifications, 1)
   MiniTest.expect.equality(notifications[1].level, vim.log.levels.ERROR)
-  MiniTest.expect.equality(notifications[1].msg, "VOoM: current buffer has no active VOoM tree")
+  MiniTest.expect.equality(notifications[1].msg, "nvim-voom: current buffer has no active nvim-voom tree")
 
   H.del_buf(buf)
 end

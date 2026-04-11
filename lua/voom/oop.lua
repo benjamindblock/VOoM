@@ -1,4 +1,4 @@
--- Outline editing operations for VOoM.
+-- Outline editing operations for nvim-voom.
 --
 -- This module contains all operations that modify the body buffer through
 -- the tree panel: insert, cut, copy, paste, move up/down, promote/demote.
@@ -249,7 +249,7 @@ local function ensure_capability(body_buf, capability)
   end
 
   vim.api.nvim_echo(
-    { { "VOoM: " .. capability .. " is not supported for " .. mode_name .. " mode", "WarningMsg" } },
+    { { "nvim-voom: " .. capability .. " is not supported for " .. mode_name .. " mode", "WarningMsg" } },
     true,
     {}
   )
@@ -618,7 +618,7 @@ function M.copy_node(tree_buf)
   vim.api.nvim_echo(
     {
       {
-        string.format("VOoM: copied %d node%s", node_count, node_count == 1 and "" or "s"),
+        string.format("nvim-voom: copied %d node%s", node_count, node_count == 1 and "" or "s"),
         "Normal",
       },
     },
@@ -699,7 +699,7 @@ function M.cut_node(tree_buf)
     target_tlnum = math.max(1, tlnum - 1),
     focus = "tree",
     echo = {
-      { string.format("VOoM: cut %d node%s", node_count, node_count == 1 and "" or "s"), "Normal" },
+      { string.format("nvim-voom: cut %d node%s", node_count, node_count == 1 and "" or "s"), "Normal" },
     },
   })
 end
@@ -718,7 +718,7 @@ function M.paste_node(tree_buf)
     return
   end
   if not clipboard.body_lines or #clipboard.body_lines == 0 then
-    vim.api.nvim_echo({ { "VOoM (paste): clipboard is empty", "WarningMsg" } }, true, {})
+    vim.api.nvim_echo({ { "nvim-voom (paste): clipboard is empty", "WarningMsg" } }, true, {})
     return
   end
   local mode, outline_state = resolve_mode(ctx.body_buf)
@@ -740,7 +740,7 @@ function M.paste_node(tree_buf)
   -- Validate clipboard: first line must be a heading.
   if #p_bnodes == 0 or p_bnodes[1] ~= 1 then
     vim.api.nvim_echo(
-      { { "VOoM (paste): invalid clipboard — first line is not a headline", "ErrorMsg" } },
+      { { "nvim-voom (paste): invalid clipboard — first line is not a headline", "ErrorMsg" } },
       true,
       {}
     )
@@ -751,7 +751,7 @@ function M.paste_node(tree_buf)
   for _, lv in ipairs(p_levels) do
     if lv < p_levels[1] then
       vim.api.nvim_echo(
-        { { "VOoM (paste): invalid clipboard — root level error", "ErrorMsg" } },
+        { { "nvim-voom (paste): invalid clipboard — root level error", "ErrorMsg" } },
         true,
         {}
       )
@@ -1114,7 +1114,7 @@ function M.promote(tree_buf)
   for i = ln1, ln2 do
     if levels[i] <= 1 then
       vim.api.nvim_echo(
-        { { "VOoM: cannot promote — already at top level", "WarningMsg" } },
+        { { "nvim-voom: cannot promote — already at top level", "WarningMsg" } },
         true,
         {}
       )
@@ -1179,7 +1179,7 @@ function M.demote(tree_buf)
   -- levels[ln1] = level of current node; levels[ln1-1] = level of previous node.
   if ln1 > 1 and levels[ln1] > levels[ln1 - 1] then
     vim.api.nvim_echo(
-      { { "VOoM: cannot demote — already a child of previous node", "WarningMsg" } },
+      { { "nvim-voom: cannot demote — already a child of previous node", "WarningMsg" } },
       true,
       {}
     )
@@ -1190,7 +1190,7 @@ function M.demote(tree_buf)
   for i = ln1, ln2 do
     if levels[i] >= 6 then
       vim.api.nvim_echo(
-        { { "VOoM: cannot demote — already at maximum level", "WarningMsg" } },
+        { { "nvim-voom: cannot demote — already at maximum level", "WarningMsg" } },
         true,
         {}
       )

@@ -1,4 +1,4 @@
--- Tree buffer/window lifecycle and navigation for VOoM.
+-- Tree buffer/window lifecycle and navigation for nvim-voom.
 --
 -- This module owns:
 --   - creating and destroying the read-only outline panel
@@ -730,7 +730,7 @@ function M.tree_navigate_right(tree_buf)
   if not tree_win then return end
 
   local tree_lnum = vim.api.nvim_win_get_cursor(tree_win)[1]
-  -- Match legacy VOoM behavior: when the current node is closed, first reveal
+  -- Match legacy nvim-voom behavior: when the current node is closed, first reveal
   -- it, then descend to the first child.
   pcall(function()
     vim.api.nvim_win_call(tree_win, function()
@@ -1018,7 +1018,7 @@ local function tree_apply_undo_command(tree_buf, cmd)
 
   if not ok then
     vim.api.nvim_echo(
-      { { "VOoM: " .. cmd .. " unavailable", "WarningMsg" } },
+      { { "nvim-voom: " .. cmd .. " unavailable", "WarningMsg" } },
       true, {}
     )
     if tree_win and vim.api.nvim_win_is_valid(tree_win) then
@@ -1515,7 +1515,7 @@ function M.create(body_buf, mode_name)
   local tree_buf = vim.api.nvim_create_buf(false, true)
   local basename = vim.fn.fnamemodify(buf_name, ":t")
   if basename == "" then basename = tostring(body_buf) end
-  vim.api.nvim_buf_set_name(tree_buf, basename .. "_VOOM" .. body_buf)
+  vim.api.nvim_buf_set_name(tree_buf, basename .. "_nvim_voom_" .. body_buf)
 
   -- Buffer options for a read-only, non-persistent scratch panel.
   vim.api.nvim_buf_set_option(tree_buf, "buftype",   "nofile")

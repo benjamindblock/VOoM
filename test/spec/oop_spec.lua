@@ -163,7 +163,7 @@ local function assert_capability_warning(op_name, fn)
   MiniTest.expect.equality(#echoes, 1)
   MiniTest.expect.equality(
     echoes[1].chunks[1][1],
-    "VOoM: " .. op_name .. " is not supported for test_code mode"
+    "nvim-voom: " .. op_name .. " is not supported for test_code mode"
   )
   MiniTest.expect.equality(echoes[1].chunks[1][2], "WarningMsg")
 end
@@ -806,7 +806,7 @@ T["paste_node"]["empty clipboard emits warning message"] = function()
   end)
 
   MiniTest.expect.equality(#echoes, 1)
-  MiniTest.expect.equality(echoes[1].chunks[1][1], "VOoM (paste): clipboard is empty")
+  MiniTest.expect.equality(echoes[1].chunks[1][1], "nvim-voom (paste): clipboard is empty")
   MiniTest.expect.equality(echoes[1].chunks[1][2], "WarningMsg")
 end
 
@@ -901,7 +901,7 @@ T["paste_node"]["invalid clipboard emits error and leaves body unchanged"] = fun
   MiniTest.expect.equality(#echoes, 1)
   MiniTest.expect.equality(
     echoes[1].chunks[1][1],
-    "VOoM (paste): invalid clipboard — first line is not a headline"
+    "nvim-voom (paste): invalid clipboard — first line is not a headline"
   )
   MiniTest.expect.equality(echoes[1].chunks[1][2], "ErrorMsg")
 end
@@ -988,7 +988,7 @@ T["promote"]["top-level no-op emits warning message"] = function()
   end)
 
   MiniTest.expect.equality(#echoes, 1)
-  MiniTest.expect.equality(echoes[1].chunks[1][1], "VOoM: cannot promote — already at top level")
+  MiniTest.expect.equality(echoes[1].chunks[1][1], "nvim-voom: cannot promote — already at top level")
   MiniTest.expect.equality(echoes[1].chunks[1][2], "WarningMsg")
 end
 
@@ -1111,7 +1111,7 @@ T["demote"]["child no-op emits warning message"] = function()
   MiniTest.expect.equality(#echoes, 1)
   MiniTest.expect.equality(
     echoes[1].chunks[1][1],
-    "VOoM: cannot demote — already a child of previous node"
+    "nvim-voom: cannot demote — already a child of previous node"
   )
   MiniTest.expect.equality(echoes[1].chunks[1][2], "WarningMsg")
 end

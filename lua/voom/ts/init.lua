@@ -70,7 +70,7 @@ function M.make_outliner(query_def)
       end)
       if not ok then
         vim.notify(
-          "VOoM: treesitter parser for '" .. query_def.lang ..
+          "nvim-voom: treesitter parser for '" .. query_def.lang ..
           "' unavailable — run :TSInstall " .. query_def.lang ..
           " (" .. tostring(err) .. ")",
           vim.log.levels.WARN
@@ -90,7 +90,7 @@ function M.make_outliner(query_def)
           vim.api.nvim_buf_delete(temp_buf, { force = true })
         end
         vim.notify(
-          "VOoM: treesitter parser for '" .. query_def.lang ..
+          "nvim-voom: treesitter parser for '" .. query_def.lang ..
           "' unavailable — run :TSInstall " .. query_def.lang ..
           " (" .. tostring(err) .. ")",
           vim.log.levels.WARN
@@ -174,7 +174,7 @@ end
 -- build_mode
 -- ==============================================================================
 
--- Assemble a complete VOoM mode table for `lang`.
+-- Assemble a complete nvim-voom mode table for `lang`.
 --
 -- Loads the query definition from `voom.ts.queries.<lang>` and the editing
 -- template from `voom.ts.templates.<lang>` (falling back to the no-op code

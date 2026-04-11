@@ -1,4 +1,4 @@
--- VOoM plugin entry point.
+-- nvim-voom plugin entry point.
 --
 -- This module is the public API surface that plugin/voom.lua dispatches to.
 -- Heavy lifting is delegated to tree.lua (buffer/window management) and
@@ -8,7 +8,7 @@ local M = {}
 
 local config = require("voom.config")
 
--- Allow users to customise VOoM by calling require("voom").setup({...}).
+-- Allow users to customise nvim-voom by calling require("voom").setup({...}).
 -- Delegates directly to config.setup, which deep-merges user_opts over
 -- config.defaults and stores the result in config.options.
 M.setup = config.setup
@@ -17,7 +17,7 @@ M.setup = config.setup
 -- Log buffer
 -- ==============================================================================
 
--- Module-level handle for the VOoM log buffer (nil until first :Voomlog).
+-- Module-level handle for the nvim-voom log buffer (nil until first :Voomlog).
 -- We keep it at module level so that successive calls to log() and log_init()
 -- share the same buffer rather than creating new scratch buffers each time.
 local log_buf = nil
@@ -29,13 +29,13 @@ local function ensure_log_buf()
   end
   -- Create a named scratch buffer that will not prompt for saving on exit.
   log_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(log_buf, "*VOOM LOG*")
+  vim.api.nvim_buf_set_name(log_buf, "*nvim-voom log*")
   vim.api.nvim_buf_set_option(log_buf, "buftype", "nofile")
   vim.api.nvim_buf_set_option(log_buf, "buflisted", false)
   return log_buf
 end
 
--- Append `msg` as a new line to the VOoM log buffer, creating it if needed.
+-- Append `msg` as a new line to the nvim-voom log buffer, creating it if needed.
 function M.log(msg)
   local buf = ensure_log_buf()
   vim.api.nvim_buf_set_option(buf, "modifiable", true)
@@ -44,7 +44,7 @@ function M.log(msg)
   vim.api.nvim_buf_set_option(buf, "modifiable", false)
 end
 
--- Open (or focus) the VOoM log buffer in a horizontal split at the bottom.
+-- Open (or focus) the nvim-voom log buffer in a horizontal split at the bottom.
 function M.log_init()
   local buf = ensure_log_buf()
 
@@ -96,7 +96,7 @@ local function resolve_body_buf()
   elseif state.is_tree(current) then
     return state.get_body(current)
   else
-    vim.notify("VOoM: current buffer has no active VOoM tree", vim.log.levels.ERROR)
+    vim.notify("nvim-voom: current buffer has no active nvim-voom tree", vim.log.levels.ERROR)
     return nil
   end
 end
@@ -105,7 +105,7 @@ end
 -- Public API
 -- ==============================================================================
 
--- Open (or focus) the VOoM tree panel for the current buffer.
+-- Open (or focus) the nvim-voom tree panel for the current buffer.
 --
 -- @param args  string  optional mode name passed from the user command
 function M.init(args)
@@ -136,14 +136,14 @@ function M.init(args)
   -- Validate the mode before attempting to create the tree so the user
   -- gets a clear error rather than a confusing Lua stack trace.
   if not modes.get(mode_name) then
-    vim.notify("VOoM: unsupported mode '" .. tostring(mode_name) .. "'", vim.log.levels.ERROR)
+    vim.notify("nvim-voom: unsupported mode '" .. tostring(mode_name) .. "'", vim.log.levels.ERROR)
     return
   end
 
   tree.create(body_buf, mode_name)
 end
 
--- Toggle the VOoM tree panel for the current buffer.
+-- Toggle the nvim-voom tree panel for the current buffer.
 -- Opens the panel if it does not exist; closes it if it does.
 --
 -- @param args  string  optional mode name (forwarded to init() when opening)
@@ -208,13 +208,13 @@ function M.grep(args)
 
   local outline = state.get_outline(body_buf)
   if not outline then
-    vim.notify("VOoM: no outline data for this buffer", vim.log.levels.ERROR)
+    vim.notify("nvim-voom: no outline data for this buffer", vim.log.levels.ERROR)
     return
   end
 
   local tree_buf = state.get_tree(body_buf)
   if not tree_buf or not vim.api.nvim_buf_is_valid(tree_buf) then
-    vim.notify("VOoM: tree buffer is not available", vim.log.levels.ERROR)
+    vim.notify("nvim-voom: tree buffer is not available", vim.log.levels.ERROR)
     return
   end
 
@@ -241,7 +241,7 @@ function M.grep(args)
   vim.fn.setqflist(entries, "r")
 
   if #entries == 0 then
-    vim.notify("VOoM grep: no headings matched '" .. args .. "'", vim.log.levels.WARN)
+    vim.notify("nvim-voom grep: no headings matched '" .. args .. "'", vim.log.levels.WARN)
   else
     vim.cmd("copen")
   end
@@ -251,7 +251,7 @@ end
 -- Voominfo
 -- ==============================================================================
 
--- Display diagnostic information about the VOoM state for the current buffer.
+-- Display diagnostic information about the nvim-voom state for the current buffer.
 -- Useful for debugging and verifying that the outline is in sync with the body.
 function M.voominfo()
   local state = require("voom.state")
@@ -266,7 +266,7 @@ function M.voominfo()
   local outline = state.get_outline(body_buf)
   local mode_name = state.get_mode(body_buf)
   if not tree_buf or not snLn or not outline or not mode_name then
-    vim.notify("VOoM: no state entry found", vim.log.levels.ERROR)
+    vim.notify("nvim-voom: no state entry found", vim.log.levels.ERROR)
     return
   end
 
@@ -283,7 +283,7 @@ function M.voominfo()
   end
 
   local msg = string.format(
-    "VOoM info\n  mode:   %s\n  nodes:  %d\n  snLn:   %d\n  node:   %s",
+    "nvim-voom info\n  mode:   %s\n  nodes:  %d\n  snLn:   %d\n  node:   %s",
     tostring(mode_name),
     node_count,
     snLn,

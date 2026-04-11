@@ -1,4 +1,4 @@
-# VOoM Session Notes
+# nvim-voom Session Notes
 
 ## Bugs / Issues / Missing Features
 

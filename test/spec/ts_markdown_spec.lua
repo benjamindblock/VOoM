@@ -151,7 +151,7 @@ snapshots["session_outline.md"] = {
   bnodes = { 1, 3 },
   levels = { 1, 2 },
   tlines = {
-    " · VOoM Session Notes",
+    " · nvim-voom Session Notes",
     "   · Bugs / Issues / Missing Features",
   },
   use_hash = true,

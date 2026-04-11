@@ -138,7 +138,7 @@ T["tree.create"]["returns a valid buffer number"] = function()
   MiniTest.expect.equality(vim.api.nvim_buf_is_valid(tree_buf), true)
 end
 
-T["tree.create"]["tree buffer name ends with _VOOMbody_bufnr"] = function()
+T["tree.create"]["tree buffer name ends with _nvim_voom_body_bufnr"] = function()
   local tree = require("voom.tree")
   local lines = H.load_fixture("sample.md")
   local body = H.make_scratch_buf(lines, "sample.md")
@@ -148,7 +148,7 @@ T["tree.create"]["tree buffer name ends with _VOOMbody_bufnr"] = function()
   T["tree.create"]._tree_buf = tree_buf
 
   local name = vim.api.nvim_buf_get_name(tree_buf)
-  MiniTest.expect.equality(name:match("_VOOM" .. body .. "$") ~= nil, true)
+  MiniTest.expect.equality(name:match("_nvim_voom_" .. body .. "$") ~= nil, true)
 end
 
 T["tree.create"]["tree buffer is nofile and non-modifiable"] = function()
@@ -451,7 +451,7 @@ T["tree.fold_actions"]["tree_contract_siblings works after promote then demote o
   vim.api.nvim_win_set_cursor(tree_win, { bugs_lnum2, 0 })
   oop.demote(tree_buf)
 
-  local first_heading_lnum = H.find_tree_lnum_by_text(tree_buf, "VOoM Session Notes")
+  local first_heading_lnum = H.find_tree_lnum_by_text(tree_buf, "nvim-voom Session Notes")
   MiniTest.expect.equality(first_heading_lnum ~= nil, true)
   vim.api.nvim_win_set_cursor(tree_win, { first_heading_lnum, 0 })
 

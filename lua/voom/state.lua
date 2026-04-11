@@ -5,7 +5,7 @@
 --
 -- Terminology mirrors the legacy voom.vim conventions:
 --   body   — the "real" content buffer the user is editing
---   tree   — the read-only outline panel VOoM creates alongside it
+--   tree   — the read-only outline panel nvim-voom creates alongside it
 --   bnodes — 1-indexed array of body line numbers, one per tree heading
 --   levels — 1-indexed array of heading depths (1–6), parallel to bnodes
 --   snLn   — "selected node line number": the tree line currently highlighted
