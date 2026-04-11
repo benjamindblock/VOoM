@@ -22,7 +22,7 @@ M.defaults = {
   -- Icons are rendered via nvim_buf_set_extmark (Neovim-only).
   fold_indicators = {
     enabled = true,
-    icons   = { open = "▾", closed = "▶", leaf = "·" },
+    icons   = { open = "▼", closed = "▶", leaf = "·" },
   },
   -- Vertical guide lines rendered at each ancestor column of nested headings.
   -- Set enabled=false to turn them off entirely.

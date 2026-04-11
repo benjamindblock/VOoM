@@ -39,7 +39,7 @@ require("voom").setup({
   cursor_follow = true,       -- scroll body to heading when tree cursor moves
   fold_indicators = {
     enabled = true,
-    icons   = { open = "▾", closed = "▶", leaf = "·" },
+    icons   = { open = "▼", closed = "▶", leaf = "·" },
   },
   indent_guides = {
     enabled = true,
@@ -66,8 +66,8 @@ works without any explicit configuration.
 | `tree_position` | `"left"\|"right"` | `"left"` | Which side the tree pane opens on. |
 | `default_mode` | `string` | `"markdown"` | Markup mode used when none can be auto-detected from `filetype`. |
 | `cursor_follow` | `boolean` | `true` | Whether moving the cursor in the tree automatically scrolls the body to the corresponding heading. |
-| `fold_indicators.enabled` | `boolean` | `true` | Show virtual-text fold-state icons (`▾`/`▶`/`·`) next to each tree node. |
-| `fold_indicators.icons` | `table` | `{ open="▾", closed="▶", leaf="·" }` | Characters used for fold indicators. |
+| `fold_indicators.enabled` | `boolean` | `true` | Show virtual-text fold-state icons (`▼`/`▶`/`·`) next to each tree node. |
+| `fold_indicators.icons` | `table` | `{ open="▼", closed="▶", leaf="·" }` | Characters used for fold indicators. |
 | `indent_guides.enabled` | `boolean` | `true` | Render vertical guide lines at ancestor columns of nested headings. |
 | `indent_guides.char` | `string` | `"│"` | Character used for indent guides. Must be a single display-column character. |
 | `badges.enabled` | `boolean` | `true` | Show `+N` descendant-count badges on collapsed nodes. |
@@ -129,8 +129,8 @@ Opening `nvim-voom` splits the window with a narrow tree pane on the left
 Indentation depth mirrors heading level:
 
 ```
- ▾ Introduction
-   ▾ Installation
+ ▼ Introduction
+   ▼ Installation
      · Requirements
      · Platform Notes
    · Usage
@@ -145,7 +145,7 @@ saved, and also when you re-enter the body after an out-of-band edit.
 The tree pane renders several visual aids via extmarks:
 
 - **Fold indicators** — each node shows an icon reflecting its fold state:
-  `▾` (open), `▶` (closed), or `·` (leaf with no children).
+  `▼` (open), `▶` (closed), or `·` (leaf with no children).
 - **Indent guides** — vertical lines (`│`) are drawn at each ancestor column
   to make nesting depth easy to follow.
 - **Descendant badges** — when a node is folded and has hidden children, a
@@ -249,7 +249,7 @@ automatically match your active colorscheme.
 | Group             | Default link / color       | Purpose                    |
 |-------------------|----------------------------|----------------------------|
 | `VoomHeading1`-`6`| `@markup.heading.N.markdown` | Per-level heading colors |
-| `VoomFoldOpen`    | `#7aa2f7` (blue)           | Open fold indicator (`▾`)  |
+| `VoomFoldOpen`    | `#7aa2f7` (blue)           | Open fold indicator (`▼`)  |
 | `VoomFoldClosed`  | `#e0af68` (amber)          | Closed fold indicator (`▶`)|
 | `VoomLeafNode`    | `#565f89` (grey)           | Leaf indicator (`·`)       |
 | `VoomIndentGuide` | `#3b4261` (dark grey)      | Vertical guide lines (`│`) |

@@ -45,7 +45,7 @@ omitting `setup()` entirely leaves all defaults in effect.
         -- Virtual-text fold-state indicators shown next to tree nodes.
         fold_indicators = {
             enabled = true,
-            icons   = { open = "▾", closed = "▶", leaf = "·" },
+            icons   = { open = "▼", closed = "▶", leaf = "·" },
         },
 
         -- Vertical indent-guide lines rendered at each ancestor column.
@@ -96,7 +96,7 @@ cursor_follow ~                                       *voom-opt-cursor_follow*
 
 fold_indicators ~                                   *voom-opt-fold_indicators*
     Type:    table { enabled: boolean, icons: table }
-    Default: { enabled = true, icons = { open = "▾", closed = "▶", leaf = "·" } }
+    Default: { enabled = true, icons = { open = "▼", closed = "▶", leaf = "·" } }
     Virtual-text fold-state icons shown next to each tree node.
     Set `enabled = false` to hide them entirely.  `icons` controls the
     characters used for open parents, closed parents, and leaf nodes.
@@ -209,7 +209,7 @@ out-of-band edit (|BufEnter|, via changedtick comparison).
 VISUAL ELEMENTS ~
                                                     *voom-fold-indicators*
 Fold indicators    Each node displays a virtual-text icon reflecting its
-                   fold state:  `▾` (open),  `▶` (closed),  `·` (leaf).
+                   fold state:  `▼` (open),  `▶` (closed),  `·` (leaf).
 
                                                     *voom-indent-guides*
 Indent guides      Vertical lines (`│`) are drawn at each ancestor column
@@ -377,7 +377,7 @@ and user overrides take precedence automatically.
     active colorscheme.
 
   VoomFoldOpen                                        *hl-VoomFoldOpen*
-    Color for the open fold indicator (`▾`).
+    Color for the open fold indicator (`▼`).
     Default: `#7aa2f7` (blue).
 
   VoomFoldClosed                                      *hl-VoomFoldClosed*

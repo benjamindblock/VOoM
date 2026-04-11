@@ -115,7 +115,7 @@ local heading_text_from_tree_line = tree_utils.heading_text_from_tree_line
 -- All groups use `default = true` so that colorschemes (and users' init.lua)
 -- can override them without the plugin overwriting their preferences.
 local function define_highlights()
-  vim.api.nvim_set_hl(0, "VoomFoldOpen",    { default = true, fg = "#7aa2f7" }) -- ▾ blue
+  vim.api.nvim_set_hl(0, "VoomFoldOpen",    { default = true, fg = "#7aa2f7" }) -- ▼ blue
   vim.api.nvim_set_hl(0, "VoomFoldClosed",  { default = true, fg = "#e0af68" }) -- ▶ amber
   vim.api.nvim_set_hl(0, "VoomLeafNode",    { default = true, fg = "#565f89" }) -- · muted grey
   vim.api.nvim_set_hl(0, "VoomIndentGuide", { default = true, fg = "#3b4261" }) -- │ dark grey
@@ -252,7 +252,7 @@ end
 --
 -- The icon placeholder · in each heading line is overlaid (not replaced in the
 -- buffer) with one of three icons:
---   ▾  — parent node, subtree visible
+--   ▼  — parent node, subtree visible
 --   ▶  — parent node, subtree folded
 --   ·  — leaf node (no children)
 --

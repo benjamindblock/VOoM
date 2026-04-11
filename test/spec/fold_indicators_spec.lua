@@ -10,7 +10,7 @@ local T = MiniTest.new_set()
 -- and inspect the resulting extmarks.  We mock fold state by controlling
 -- foldclosed() results indirectly: because the tree buffers used here are
 -- floating windows with foldmethod=manual (no folds created), foldclosed()
--- always returns -1, so every parent node appears "open" (▾).  The "folded"
+-- always returns -1, so every parent node appears "open" (▼).  The "folded"
 -- icon path is verified via a separate stub approach below.
 
 T["apply_fold_indicators"] = MiniTest.new_set({
@@ -76,7 +76,7 @@ T["apply_fold_indicators"]["places extmarks on all heading lines"] = function()
   MiniTest.expect.equality(#marks, 4)
 end
 
-T["apply_fold_indicators"]["parent node gets open icon (▾) when unfolded"] = function()
+T["apply_fold_indicators"]["parent node gets open icon (▼) when unfolded"] = function()
   local tree = require("voom.tree")
   local tree_buf = T["apply_fold_indicators"]._tree
   local body_buf = T["apply_fold_indicators"]._body
@@ -85,13 +85,13 @@ T["apply_fold_indicators"]["parent node gets open icon (▾) when unfolded"] = f
 
   local ns = vim.api.nvim_create_namespace("voom_fold_indicators")
   -- tree line 1 (row 0) is "Heading One" — levels[1]=1 with child levels[2]=2.
-  -- foldclosed returns -1 (no manual fold), so it should show ▾.
+  -- foldclosed returns -1 (no manual fold), so it should show ▼.
   local marks = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {
     details = true,
   })
   MiniTest.expect.equality(#marks, 1)
   local vt = marks[1][4].virt_text
-  MiniTest.expect.equality(vt[1][1], "▾")
+  MiniTest.expect.equality(vt[1][1], "▼")
   MiniTest.expect.equality(vt[1][2], "VoomFoldOpen")
 end
 
@@ -554,7 +554,7 @@ T["render_count_badges - integration"]["native zc/zo refresh fold icons"] = func
   local open = vim.api.nvim_buf_get_extmarks(tree_buf, ns, { 0, 0 }, { 0, -1 }, {
     details = true,
   })
-  MiniTest.expect.equality(open[1][4].virt_text[1][1], "▾")
+  MiniTest.expect.equality(open[1][4].virt_text[1][1], "▼")
   MiniTest.expect.equality(open[1][4].virt_text[1][2], "VoomFoldOpen")
 end
 
