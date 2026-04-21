@@ -68,7 +68,7 @@ works without any explicit configuration.
 | `tree_position` | `"left"\|"right"` | `"left"` | Which side the tree pane opens on. |
 | `default_mode` | `string` | `"markdown"` | Markup mode used when none can be auto-detected from `filetype`. |
 | `auto_open` | `boolean \| string[]` | `false` | Automatically open the tree pane on `FileType`. `true` enables it for every registered mode; a table (e.g. `{ "markdown" }`) restricts it to the listed modes. |
-| `auto_close` | `boolean \| string[]` | `false` | Automatically close the tree pane when the body buffer leaves its window (`:q` on the body, fzf replacing the buffer, netrw replacing it with a directory listing). Same shape as `auto_open`. |
+| `auto_close` | `boolean \| string[]` | `false` | Automatically close the voom pair when *either* pane leaves its window. Body leaving closes the tree; tree leaving closes the tree and the body's window, so `:q` / fzf / `-` to netrw from either side tears down the whole pair. Same shape as `auto_open`; mode filter is always matched against the body's mode. |
 | `cursor_follow` | `boolean` | `true` | Whether moving the cursor in the tree automatically scrolls the body to the corresponding heading. |
 | `fold_indicators.enabled` | `boolean` | `true` | Show virtual-text fold-state icons (`▼`/`▶`/`·`) next to each tree node. |
 | `fold_indicators.icons` | `table` | `{ open="▼", closed="▶", leaf="·" }` | Characters used for fold indicators. |
@@ -95,14 +95,18 @@ works without any explicit configuration.
 ### Auto-open and auto-close
 
 `auto_open` opens the tree pane whenever a buffer's filetype matches a
-registered voom mode, and `auto_close` closes it when the body buffer leaves
-its window (e.g. `:q` on the body, fzf replacing the buffer, netrw swapping
-it for a directory listing). Both default to `false`.
+registered voom mode. `auto_close` is symmetric in both directions: when
+either pane leaves its window — via `:q`, fzf replacing the buffer, or `-`
+to netrw — the entire voom pair is torn down. Body-side teardown closes
+the tree; tree-side teardown closes the tree and the body's window (the
+body buffer itself is preserved; if it has unsaved changes the window
+close is skipped so your work is never discarded). Both flags default to
+`false`.
 
 Both flags are driven by Neovim's window-display lifecycle (`BufWinEnter`
-and `BufWinLeave`), so they correctly handle netrw round-trips: the tree
-closes when you press `-` to pop up to a directory listing and reopens
-when you reselect the same file.
+and `BufWinLeave`), so they correctly handle netrw round-trips: pressing
+`-` in either pane closes the whole pair, and reselecting the same file
+from netrw reopens the tree alongside the body.
 
 Enable globally:
 

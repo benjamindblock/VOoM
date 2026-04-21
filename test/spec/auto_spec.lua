@@ -18,10 +18,20 @@ local T = MiniTest.new_set()
 -- unchanged; only the test's call to `vim.schedule` becomes immediate.
 
 local function with_sync_schedule(fn)
+  -- Collect scheduled callbacks during `fn` and drain them once fn
+  -- returns.  Running them inline (immediately inside `vim.schedule`)
+  -- works for auto_open but breaks auto_close: nvim_buf_delete on the
+  -- tree buffer inside its own BufWinLeave dispatch raises E937
+  -- ("Attempt to delete a buffer that is in use").  By draining after
+  -- fn returns, the event dispatch has already completed and the
+  -- buffer is no longer in use, matching production's next-tick
+  -- behaviour without the MiniTest-vs-vim.wait deadlock.
   local orig = vim.schedule
-  vim.schedule = function(f) f() end
+  local queue = {}
+  vim.schedule = function(f) table.insert(queue, f) end
   local ok, err = pcall(fn)
   vim.schedule = orig
+  for _, f in ipairs(queue) do f() end
   if not ok then error(err) end
 end
 
@@ -35,14 +45,19 @@ local function open_body_in_window(body_buf, ft)
   end)
 end
 
---- Trigger `BufWinLeave` on `body_buf` by swapping the current window's
---- buffer to a throwaway scratch.  This matches the real-world scenarios the
---- auto_close flag targets (fzf replacing the buffer, netrw replacing it with
---- a directory listing) more closely than `:bwipeout`, and — because the body
---- buffer stays alive — it avoids the `E855: Autocommands caused command to
---- abort` warning that a sync tree-delete inside a wipe would trigger.
-local function trigger_bufwinleave(body_buf)
+--- Trigger `BufWinLeave` on `buf` by focusing its window and swapping the
+--- window's buffer to a throwaway scratch.  Works for either the body or the
+--- tree buffer, so tests can exercise `auto_close` from either direction.
+--- Matches the real-world scenarios the flag targets (fzf replacing the
+--- buffer, netrw replacing it with a directory listing) more closely than
+--- `:bwipeout`, and — because `buf` stays alive — avoids the
+--- `E855: Autocommands caused command to abort` warning that a sync
+--- tree-delete inside a wipe would trigger.
+local function trigger_bufwinleave(buf)
+  local win = H.find_win_for_buf(buf)
+  assert(win, "trigger_bufwinleave: no window shows buffer " .. tostring(buf))
   with_sync_schedule(function()
+    vim.api.nvim_set_current_win(win)
     local scratch = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_set_current_buf(scratch)
   end)
@@ -276,6 +291,61 @@ T["auto_close"]["table form only closes listed modes"] = function()
   trigger_bufwinleave(py_body)
   MiniTest.expect.equality(vim.api.nvim_buf_is_valid(py_tree), true)
   -- post_case → cleanup_registered_bodies will close the python tree.
+end
+
+-- ------------------------------------------------------------------------
+-- Symmetric direction: tree-side BufWinLeave tears down the whole pair.
+-- ------------------------------------------------------------------------
+
+T["auto_close"]["true closes body window when tree leaves its window"] = function()
+  local voom = require("voom")
+
+  voom.setup({ auto_close = true })
+  local body, tree_buf = open_tree_for("sample.md", "markdown")
+
+  -- Act on the tree side: swap the tree window's buffer to a scratch.
+  -- This models `-` / fzf / `:q` invoked from the tree pane.
+  trigger_bufwinleave(tree_buf)
+
+  -- Tree buffer is wiped, state is gone, and no window shows the body
+  -- anymore.  The body buffer itself survives — force=false on the
+  -- window close preserves unsaved work (though this body has none).
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(tree_buf), false)
+  MiniTest.expect.equality(H.find_win_for_buf(body), nil)
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(body), true)
+end
+
+T["auto_close"]["default (false) leaves body alone when tree leaves its window"] = function()
+  local voom = require("voom")
+
+  voom.setup({})
+  local body, tree_buf = open_tree_for("sample.md", "markdown")
+
+  trigger_bufwinleave(tree_buf)
+
+  -- Nothing should happen on either side when auto_close is off.
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(tree_buf), true)
+  MiniTest.expect.equality(H.find_win_for_buf(body) ~= nil, true)
+  -- post_case → cleanup_registered_bodies closes the orphaned tree.
+end
+
+T["auto_close"]["table form filter applies to tree direction"] = function()
+  local voom = require("voom")
+
+  voom.setup({ auto_close = { "markdown" } })
+
+  -- Markdown tree leaving → body window closes.
+  local md_body, md_tree = open_tree_for("sample.md", "markdown")
+  trigger_bufwinleave(md_tree)
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(md_tree), false)
+  MiniTest.expect.equality(H.find_win_for_buf(md_body), nil)
+
+  -- Python tree leaving → body window untouched (mode not listed).
+  local py_body, py_tree = open_tree_for("sample.py", "python")
+  trigger_bufwinleave(py_tree)
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(py_tree), true)
+  MiniTest.expect.equality(H.find_win_for_buf(py_body) ~= nil, true)
+  -- post_case → cleanup_registered_bodies closes the python tree.
 end
 
 return T

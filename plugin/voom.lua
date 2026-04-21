@@ -101,6 +101,14 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
   end,
 })
 
+-- `auto_close` is bidirectional: either pane leaving its window tears down
+-- the whole voom pair.
+--   * body leaves → close its tree (the original scenario — `:q` on the
+--     body, fzf replacing the buffer, `-` to netrw).
+--   * tree leaves → close the tree AND the body's window (same three
+--     scenarios, invoked from the tree side).
+-- The mode filter, when `auto_close` is a table, is always applied to the
+-- body's registered mode, so both directions share one filter.
 vim.api.nvim_create_autocmd("BufWinLeave", {
   group = voom_augroup,
   callback = function(args)
@@ -111,19 +119,50 @@ vim.api.nvim_create_autocmd("BufWinLeave", {
     end
 
     local state = require("voom.state")
-    if not state.is_body(args.buf) then
+
+    local body_buf, close_body_windows
+    if state.is_body(args.buf) then
+      body_buf = args.buf
+      close_body_windows = false
+    elseif state.is_tree(args.buf) then
+      body_buf = state.get_body(args.buf)
+      close_body_windows = true
+    else
+      return
+    end
+    if not body_buf then
       return
     end
 
     -- Per-mode filtering when auto_close is a table.
     if type(auto_close) == "table"
-       and not mode_allowed(auto_close, state.get_mode(args.buf)) then
+       and not mode_allowed(auto_close, state.get_mode(body_buf)) then
       return
     end
 
-    local body_buf = args.buf
+    -- When we're closing from the tree side, snapshot the body's windows
+    -- now.  voom.close will wipe the tree buffer on the next tick, which
+    -- can cascade window changes we'd rather isolate from this list.
+    local body_wins = {}
+    if close_body_windows then
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_is_valid(win)
+           and vim.api.nvim_win_get_buf(win) == body_buf then
+          table.insert(body_wins, win)
+        end
+      end
+    end
+
     vim.schedule(function()
       require("voom").close(body_buf)
+      -- `force = false` — if the body has unsaved changes, skip the
+      -- window close rather than discard the user's work.  They can
+      -- save and close it themselves; we've already torn down the tree.
+      for _, win in ipairs(body_wins) do
+        if vim.api.nvim_win_is_valid(win) then
+          pcall(vim.api.nvim_win_close, win, false)
+        end
+      end
     end)
   end,
 })

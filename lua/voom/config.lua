@@ -16,9 +16,13 @@ M.defaults = {
   -- true   → auto-open for all supported modes
   -- table  → auto-open only for the listed mode names, e.g. {"markdown"}
   auto_open = false,
-  -- Automatically close the tree pane when the body buffer leaves its
-  -- window (e.g. `:q` on the body, fzf replacing the buffer, netrw
-  -- replacing the buffer with a directory listing).
+  -- Automatically close the voom two-pane setup when *either* pane
+  -- leaves its window (e.g. `:q`, fzf replacing the buffer, `-` to
+  -- netrw).  Body leaving → its tree closes.  Tree leaving → the tree
+  -- closes AND the body's window closes, so `-`/fzf/`:q` invoked from
+  -- the tree side tears down the whole pair.  The body buffer itself
+  -- is never wiped, only its window is closed; if the body has unsaved
+  -- changes the window-close is skipped so work is preserved.
   -- false  → never auto-close
   -- true   → auto-close for all supported modes
   -- table  → auto-close only for the listed mode names, e.g. {"markdown"}

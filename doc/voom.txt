@@ -112,13 +112,22 @@ auto_open ~                                               *voom-opt-auto_open*
 auto_close ~                                             *voom-opt-auto_close*
     Type:    boolean | string[]
     Default: false
-    Automatically close the tree pane when the body buffer leaves its
-    window.  Triggered by |BufWinLeave|, so the following scenarios all
-    dismiss the tree: `:q` on the body, fzf replacing the buffer with its
-    target file, and netrw replacing the buffer with a directory listing.
+    Automatically close the voom two-pane setup when *either* pane
+    leaves its window.  Triggered by |BufWinLeave|, so the same three
+    scenarios (`:q`, fzf replacing the buffer, `-` to netrw) apply to
+    both directions:
+      • Body leaves its window → its tree closes.
+      • Tree leaves its window → the tree closes AND the body's window
+        closes, so `-`/fzf/`:q` invoked from the tree side tears down
+        the whole pair.
+    The body buffer itself is never wiped — only its window is closed.
+    If the body has unsaved changes the window-close is skipped so the
+    user's work is preserved.
       • `false` — never auto-close (default).
       • `true`  — auto-close for every registered mode.
-      • table   — auto-close only for the listed mode names.
+      • table   — auto-close only for the listed mode names; the filter
+                  is always matched against the body's mode, so both
+                  directions share one rule.
     See also |voom.close()|, the underlying API.
 
 cursor_follow ~                                       *voom-opt-cursor_follow*
