@@ -103,12 +103,31 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
 
 -- `auto_close` is bidirectional: either pane leaving its window tears down
 -- the whole voom pair.
---   * body leaves → close its tree (the original scenario — `:q` on the
---     body, fzf replacing the buffer, `-` to netrw).
---   * tree leaves → close the tree AND the body's window (same three
---     scenarios, invoked from the tree side).
--- The mode filter, when `auto_close` is a table, is always applied to the
--- body's registered mode, so both directions share one filter.
+--   * body leaves → close the tree's window.
+--   * tree leaves → close the body's window.
+-- We close the *other pane's window* (rather than merely wiping the other
+-- pane's buffer) for two reasons:
+--
+--   1. If we only wipe the tree buffer when the body leaves, Neovim
+--      needs to pick a new buffer for the still-open tree window and
+--      reaches for the just-hidden body — visible to the user as a
+--      flicker where the body appears to come back.
+--   2. If we only try nvim_win_close(body_win, false) when the tree
+--      leaves, and the body is the last window in the last tab,
+--      Neovim refuses (E444); the pair ends up half-dead.
+--
+-- Running `:quit` inside the target window via nvim_win_call handles both
+-- cases correctly: it closes the window when there's somewhere to fall
+-- back to, exits Neovim when it was the last window (which is what the
+-- user asked for by dismissing the pair), and raises E37 rather than
+-- discarding unsaved body changes.
+--
+-- State is unregistered *synchronously* (before the scheduled callback)
+-- so the window-close cascade inside the scheduled tick doesn't re-enter
+-- this handler with stale is_body / is_tree truths.
+--
+-- The mode filter, when `auto_close` is a table, is always matched
+-- against the body's registered mode, so both directions share one rule.
 vim.api.nvim_create_autocmd("BufWinLeave", {
   group = voom_augroup,
   callback = function(args)
@@ -119,14 +138,12 @@ vim.api.nvim_create_autocmd("BufWinLeave", {
     end
 
     local state = require("voom.state")
-
-    local body_buf, close_body_windows
-    if state.is_body(args.buf) then
+    local leaving_is_body = state.is_body(args.buf)
+    local body_buf
+    if leaving_is_body then
       body_buf = args.buf
-      close_body_windows = false
     elseif state.is_tree(args.buf) then
       body_buf = state.get_body(args.buf)
-      close_body_windows = true
     else
       return
     end
@@ -134,34 +151,45 @@ vim.api.nvim_create_autocmd("BufWinLeave", {
       return
     end
 
-    -- Per-mode filtering when auto_close is a table.
     if type(auto_close) == "table"
        and not mode_allowed(auto_close, state.get_mode(body_buf)) then
       return
     end
 
-    -- When we're closing from the tree side, snapshot the body's windows
-    -- now.  voom.close will wipe the tree buffer on the next tick, which
-    -- can cascade window changes we'd rather isolate from this list.
-    local body_wins = {}
-    if close_body_windows then
+    local tree_buf = state.get_tree(body_buf)
+    local target_buf = leaving_is_body and tree_buf or body_buf
+
+    -- Snapshot the windows to close before deferring — the window list
+    -- can shift during the `args.buf` teardown that's already in flight.
+    local target_wins = {}
+    if target_buf then
       for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_is_valid(win)
-           and vim.api.nvim_win_get_buf(win) == body_buf then
-          table.insert(body_wins, win)
+           and vim.api.nvim_win_get_buf(win) == target_buf then
+          table.insert(target_wins, win)
         end
       end
     end
 
+    -- Pull the plug on voom state right now so the `:quit` cascade below
+    -- doesn't re-trigger this handler with `is_body` / `is_tree` still
+    -- returning true.  The tree buffer itself is still wiped, but we do
+    -- it manually on the next tick to avoid E937 ("buffer in use")
+    -- inside the event dispatch.
+    state.unregister(body_buf)
+
     vim.schedule(function()
-      require("voom").close(body_buf)
-      -- `force = false` — if the body has unsaved changes, skip the
-      -- window close rather than discard the user's work.  They can
-      -- save and close it themselves; we've already torn down the tree.
-      for _, win in ipairs(body_wins) do
+      for _, win in ipairs(target_wins) do
         if vim.api.nvim_win_is_valid(win) then
-          pcall(vim.api.nvim_win_close, win, false)
+          pcall(function()
+            vim.api.nvim_win_call(win, function()
+              vim.cmd("quit")
+            end)
+          end)
         end
+      end
+      if tree_buf and vim.api.nvim_buf_is_valid(tree_buf) then
+        pcall(vim.api.nvim_buf_delete, tree_buf, { force = true })
       end
     end)
   end,

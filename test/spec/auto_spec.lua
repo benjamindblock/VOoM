@@ -270,10 +270,18 @@ T["auto_close"]["true closes tree when body leaves its window"] = function()
 
   voom.setup({ auto_close = true })
   local body, tree_buf = open_tree_for("sample.md", "markdown")
+  local tree_win = H.find_win_for_buf(tree_buf)
+  MiniTest.expect.equality(tree_win ~= nil, true)
 
   trigger_bufwinleave(body)
 
+  -- The tree *window* must be closed, not just the tree buffer wiped.
+  -- If only the buffer were wiped, Neovim would pick another buffer for
+  -- the still-open tree window and grab the just-hidden body — the
+  -- user-visible flicker that regression-motivated this fix.
+  MiniTest.expect.equality(vim.api.nvim_win_is_valid(tree_win), false)
   MiniTest.expect.equality(vim.api.nvim_buf_is_valid(tree_buf), false)
+  MiniTest.expect.equality(H.find_win_for_buf(body), nil)
 end
 
 T["auto_close"]["table form only closes listed modes"] = function()
@@ -302,16 +310,24 @@ T["auto_close"]["true closes body window when tree leaves its window"] = functio
 
   voom.setup({ auto_close = true })
   local body, tree_buf = open_tree_for("sample.md", "markdown")
+  local body_win = H.find_win_for_buf(body)
+  MiniTest.expect.equality(body_win ~= nil, true)
 
   -- Act on the tree side: swap the tree window's buffer to a scratch.
   -- This models `-` / fzf / `:q` invoked from the tree pane.
   trigger_bufwinleave(tree_buf)
 
-  -- Tree buffer is wiped, state is gone, and no window shows the body
-  -- anymore.  The body buffer itself survives — force=false on the
-  -- window close preserves unsaved work (though this body has none).
+  -- The body *window* must be closed.  Previously we called
+  -- nvim_win_close(body_win, false) which refuses to close the last
+  -- window in the last tab (E444) — pcall swallowed the error and the
+  -- body was left hanging.  `:quit` via nvim_win_call handles that case
+  -- by exiting Neovim, which in tests is fine because `trigger_bufwinleave`
+  -- leaves a scratch window behind so `:quit` just closes body's window.
+  MiniTest.expect.equality(vim.api.nvim_win_is_valid(body_win), false)
   MiniTest.expect.equality(vim.api.nvim_buf_is_valid(tree_buf), false)
   MiniTest.expect.equality(H.find_win_for_buf(body), nil)
+  -- Body buffer itself survives — `:quit` closes the window, not the
+  -- buffer, so the user can `:b` back into it if they want.
   MiniTest.expect.equality(vim.api.nvim_buf_is_valid(body), true)
 end
 
