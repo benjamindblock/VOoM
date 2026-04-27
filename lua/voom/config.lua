@@ -69,6 +69,26 @@ M.defaults = {
   -- false → leave vsplits as Neovim's default (broken layout)
   -- true  → push new vsplits to the body-side edge of the tabpage
   unified_vertical_splits = true,
+  -- Block any `:split` / `:vsplit` (and friends — `:new`, `<C-w>s`,
+  -- `<C-w>v`, …) initiated *from the tree pane*.  Every split from the
+  -- tree pane creates a new window that inherits the tree buffer,
+  -- producing two read-only display windows over the same buffer.
+  -- Window-local fold state diverges between them, structural tree
+  -- operations cursor against whichever window `find_win_for_buf`
+  -- returns first (not necessarily the one the user is looking at),
+  -- and there's no compelling workflow that needs a duplicate tree.
+  --
+  -- With this flag on, the new window is closed immediately after
+  -- WinNew fires, which returns focus to the source tree pane — the
+  -- net visible effect is that the split keystroke is a no-op.
+  -- Body-pane splits are unaffected; they're still reshaped per
+  -- `unified_horizontal_splits` / `unified_vertical_splits`.
+  --
+  -- false → tree-pane splits are allowed (subject to the unified_*
+  --         flags).  Users opting out accept the dup-tree-buffer
+  --         hazards listed above.
+  -- true  → tree-pane splits are silently dropped.
+  lock_tree_splits = true,
   -- Whether moving the cursor in the tree automatically scrolls the body
   -- window to the corresponding heading without moving focus.
   cursor_follow = true,

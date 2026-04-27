@@ -40,17 +40,16 @@ vim.api.nvim_create_user_command("VoomSort", function(opts)
 end, { nargs = "?" })
 
 -- ==============================================================================
--- Auto-open / auto-close / unified splits
+-- Auto-open / auto-close / unified splits / tree-split lockdown
 -- ==============================================================================
 --
 -- All callbacks are cheap when their flag is off — a single config
--- table lookup and early return.  They're gated on the `auto_open`,
--- `auto_close`, `unified_horizontal_splits`, and
--- `unified_vertical_splits` config fields respectively; the auto_*
--- flags default to false, the unified_* flags to true (they correct
--- otherwise-broken layouts that users almost never want).  Users who
--- never opt in to the auto_* flags pay no runtime cost beyond
--- registration.
+-- table lookup and early return.  They're gated on `auto_open`,
+-- `auto_close`, `unified_horizontal_splits`, `unified_vertical_splits`,
+-- and `lock_tree_splits` respectively; the auto_* flags default to
+-- false, the others to true (they correct otherwise-broken layouts
+-- and prevent the dup-tree class of bugs).  Users who never opt in
+-- to the auto_* flags pay no runtime cost beyond registration.
 
 local voom_augroup = vim.api.nvim_create_augroup("voom_auto", { clear = true })
 
@@ -198,7 +197,7 @@ vim.api.nvim_create_autocmd("BufWinLeave", {
 })
 
 -- ==============================================================================
--- Unified splits (horizontal and vertical)
+-- Unified splits + tree-pane split lockdown
 -- ==============================================================================
 --
 -- Default `:split` and `:vsplit` inside an active voom session both
@@ -208,33 +207,39 @@ vim.api.nvim_create_autocmd("BufWinLeave", {
 --   :sp in body →  {row, [{leaf, tree}, {col, [{leaf, new}, {leaf, body}]}]}
 --   :vs in tree →  {row, [{leaf, tree}, {leaf, dup_tree}, {leaf, body}]}
 --
--- For horizontal splits the tree-side and body-side rows go out of
--- sync; for vertical splits the new window lands between the tree
--- and body, displacing the sidebar pinning.
+-- We intercept `WinNew` and dispatch through three branches in order:
 --
--- We intercept `WinNew`, locate the new window's parent in
--- `vim.fn.winlayout()`, and dispatch on its kind:
+--  1. **Tree-pane lockdown** (`lock_tree_splits`).  When the split
+--     was initiated from a tree-buffer window, close the new window
+--     immediately.  Every tree-pane split duplicates the tree buffer,
+--     and two read-only display windows over the same buffer have
+--     divergent window-local fold state and a single shared cursor —
+--     a class of bugs without a compensating use case.  When this
+--     branch fires, the unified_* branches below are skipped.
 --
---   * Parent is `"col"` (horizontal split): run `wincmd K` / `wincmd J`
---     to lift the new window to a full-width sibling above or below
---     the entire tree+body row.  Direction *honors* the user's
---     `:abo split` / `:bel split` intent, since both ends of the
---     tabpage are equally valid for a new full-width window.
+--  2. **Horizontal split** (`unified_horizontal_splits`, parent kind
+--     `"col"`).  Run `wincmd K` / `wincmd J` to lift the new window
+--     to a full-width sibling above or below the entire tree+body
+--     row.  Direction *honors* the user's `:abo split` / `:bel split`
+--     intent, since both ends of the tabpage are equally valid for a
+--     new full-width window.
 --
---   * Parent is `"row"` (vertical split): run `wincmd L` / `wincmd H`
---     to push the new window to the body-side edge of the tabpage,
---     full height.  Direction is determined by `tree_position`
---     (left ⇒ push right, right ⇒ push left) and *overrides* the
---     user's `:abo vsp` / `:bel vsp` intent — honoring it would
---     either land the new window between tree and body (the broken
---     state we're preventing) or displace the tree from its sidebar
+--  3. **Vertical split** (`unified_vertical_splits`, parent kind
+--     `"row"`).  Run `wincmd L` / `wincmd H` to push the new window
+--     to the body-side edge of the tabpage, full height.  Direction
+--     is determined by `tree_position` (left ⇒ push right, right ⇒
+--     push left) and *overrides* the user's `:abo vsp` / `:bel vsp`
+--     intent — honoring it would either land the new window between
+--     tree and body (broken) or displace the tree from its sidebar
 --     position.
 --
--- Each branch only fires when at least one sibling under the parent
--- node is the tree or body window, narrowing the fix-up to splits
--- that actually broke the canonical voom row.  Voom's own tree-pane
+-- Branches 2 and 3 only fire when at least one sibling under the
+-- parent node is the tree or body window, narrowing the fix-up to
+-- splits that broke the canonical voom row.  Voom's own tree-pane
 -- creation (a vsplit) is protected by the `find_voom_pair_in_tab`
--- exclude-win logic and the `new == tree_win or body_win` guard.
+-- exclude-win logic and the `new == tree_win or body_win` guard;
+-- it's also issued from the *body* window inside `tree.create()`,
+-- so the lockdown branch doesn't trigger on it.
 
 -- Walk a winlayout tree and return (parent_kind, siblings) for the
 -- node `target_win` if found.  `parent_kind` is the layout type of
@@ -305,18 +310,31 @@ vim.api.nvim_create_autocmd("WinNew", {
   group = voom_augroup,
   callback = function()
     local config = require("voom.config")
-    -- Don't bail on either flag yet — we don't know the split's axis
-    -- until we resolve `parent_kind` below.  Each branch gates on its
-    -- own flag.  If both are off there's no work to do, so short-circuit.
-    if not (config.options.unified_horizontal_splits or config.options.unified_vertical_splits) then
+    -- Don't bail on any one flag yet — we don't know which branch will
+    -- apply until we resolve the new window's parent and source.  Each
+    -- branch gates on its own flag below.  If all three are off there's
+    -- no work to do, so short-circuit.
+    if
+      not (
+        config.options.lock_tree_splits
+        or config.options.unified_horizontal_splits
+        or config.options.unified_vertical_splits
+      )
+    then
       return
     end
 
-    -- Capture the originating tabpage synchronously.  By the time the
-    -- scheduled callback runs `:tabnew`-style commands could have moved
-    -- focus to a different tab; we only want to fix layouts in the tab
-    -- where the split actually happened.
+    -- Capture the originating tabpage *and* the source window
+    -- synchronously.  By the time the scheduled callback runs:
+    --   * `:tabnew`-style commands could have moved focus to a
+    --     different tab — we only want to fix layouts in the tab
+    --     where the split actually happened.
+    --   * `:split` will have transferred focus to the new window —
+    --     `nvim_get_current_win()` will no longer point at the source
+    --     pane.  We need the source identity (specifically: was it a
+    --     tree window?) for the lockdown check.
     local tab = vim.api.nvim_get_current_tabpage()
+    local source_win = vim.api.nvim_get_current_win()
 
     -- Defer until Neovim has finished settling the new window's
     -- position.  At WinNew firing time the new window exists in the
@@ -347,6 +365,19 @@ vim.api.nvim_create_autocmd("WinNew", {
       -- pair, the registered windows might still coincide with new_win.
       -- Bail in that case rather than fight the plugin's own setup.
       if new_win == tree_win or new_win == body_win then
+        return
+      end
+
+      -- Tree-pane split lockdown.  Compare the source window's buffer
+      -- to the tree window's buffer (rather than the windows directly)
+      -- so the check still fires when the user splits from a duplicate
+      -- tree window — e.g., after temporarily disabling the lockdown,
+      -- producing a dup-tree, then re-enabling it.
+      local tree_buf = vim.api.nvim_win_get_buf(tree_win)
+      local source_was_tree = vim.api.nvim_win_is_valid(source_win)
+        and vim.api.nvim_win_get_buf(source_win) == tree_buf
+      if config.options.lock_tree_splits and source_was_tree then
+        pcall(vim.api.nvim_win_close, new_win, true)
         return
       end
 

@@ -462,7 +462,9 @@ T["unified_horizontal_splits"]["bel split from body lifts new window to full-wid
 end
 
 T["unified_horizontal_splits"]["bel split from tree lifts new window to full-width bottom"] = function()
-  require("voom").setup({})
+  -- Tree-source splits are locked down by default; opt out so the
+  -- legacy unified-split fix-up path stays exercised.
+  require("voom").setup({ lock_tree_splits = false })
 
   local _, _, tree_win, body_win = open_session("tree")
 
@@ -572,7 +574,9 @@ local function third_leaf(layout, tree_win, body_win)
 end
 
 T["unified_vertical_splits"]["vs from tree pushes new window to far right"] = function()
-  require("voom").setup({}) -- defaults: tree_position="left", flag=true
+  -- Tree-source splits are locked down by default; opt out so the
+  -- unified-vsplit fix-up path stays exercised.
+  require("voom").setup({ lock_tree_splits = false }) -- tree_position="left", unified flag default true
 
   local _, _, tree_win, body_win = open_session("tree")
 
@@ -674,7 +678,8 @@ T["unified_vertical_splits"]["tree_position=right pushes new window to far left"
 end
 
 T["unified_vertical_splits"]["flag=false leaves the broken vsplit layout in place"] = function()
-  require("voom").setup({ unified_vertical_splits = false })
+  -- Same opt-out as the analogous tree-source tests above.
+  require("voom").setup({ unified_vertical_splits = false, lock_tree_splits = false })
 
   local _, _, tree_win, body_win = open_session("tree")
 
@@ -726,7 +731,11 @@ T["unified_vertical_splits"]["follow_cursor keeps focus in duplicate tree window
   -- the user is currently in.  Every cursor move in the duplicate tree
   -- bounced focus back to the original.  Confirm the duplicate keeps
   -- focus across an explicit follow_cursor call.
-  require("voom").setup({})
+  --
+  -- The dup-tree state is now only reachable with lock_tree_splits=false
+  -- (or by some other path that creates two tree windows); opt out so
+  -- this regression stays guarded for users who disable the lockdown.
+  require("voom").setup({ lock_tree_splits = false })
 
   local _, tree_buf, tree_win_orig, _ = open_session("tree")
 
@@ -754,6 +763,120 @@ T["unified_vertical_splits"]["follow_cursor keeps focus in duplicate tree window
   if vim.api.nvim_win_is_valid(tree_dup) then
     vim.api.nvim_win_close(tree_dup, true)
   end
+end
+
+-- ==============================================================================
+-- lock_tree_splits autocommand
+-- ==============================================================================
+
+T["lock_tree_splits"] = MiniTest.new_set({ hooks = { post_case = reset_state } })
+
+T["lock_tree_splits"]["vs from tree pane is silently dropped"] = function()
+  require("voom").setup({}) -- default lock_tree_splits = true
+
+  local _, _, tree_win, body_win = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  -- Layout returns to the canonical [tree, body] row — no third
+  -- window survives.
+  local layout = vim.fn.winlayout()
+  MiniTest.expect.equality(layout[1], "row")
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 2)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, tree_win), true)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, body_win), true)
+end
+
+T["lock_tree_splits"]["sp from tree pane is silently dropped"] = function()
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("split")
+  end)
+
+  -- Top-level layout stays a "row" of [tree, body].  No "col"
+  -- promotion (which is what unified_horizontal_splits would have
+  -- done if the lockdown hadn't fired first).
+  local layout = vim.fn.winlayout()
+  MiniTest.expect.equality(layout[1], "row")
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 2)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, tree_win), true)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, body_win), true)
+end
+
+T["lock_tree_splits"]["body-pane vsplit still gets unified treatment"] = function()
+  -- Lockdown is asymmetric: only tree-pane splits are blocked.  Body
+  -- splits flow through the unified-vsplit branch as before.
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  MiniTest.expect.equality(leaves[1], tree_win)
+  MiniTest.expect.equality(leaves[2], body_win)
+end
+
+T["lock_tree_splits"]["body-pane split still gets unified treatment"] = function()
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("belowright split")
+  end)
+
+  -- Same shape as the unified_horizontal_splits "bel split from body"
+  -- assertion: top-level becomes a col with the tree+body row above
+  -- a leaf below.
+  local layout = vim.fn.winlayout()
+  local ok, msg = is_unified_layout(layout, tree_win, body_win)
+  MiniTest.expect.equality(ok, true, msg)
+end
+
+T["lock_tree_splits"]["flag=false re-allows tree-pane splits"] = function()
+  -- Sanity: with the lockdown disabled, the tree-pane vsplit flows
+  -- through the unified-vsplit branch and produces a 3-leaf row.
+  require("voom").setup({ lock_tree_splits = false })
+
+  local _, _, tree_win, body_win = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  MiniTest.expect.equality(leaves[1], tree_win)
+  MiniTest.expect.equality(leaves[2], body_win)
+end
+
+T["lock_tree_splits"]["focus returns to the source tree window"] = function()
+  -- After the lockdown closes the new window, Neovim falls back to
+  -- the previously-focused window.  Confirm the user lands back where
+  -- they started (still in the tree pane), so a stray :vs keystroke
+  -- isn't user-visible beyond the new window flickering away.
+  require("voom").setup({})
+
+  local _, _, tree_win, _ = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_win)
 end
 
 return T

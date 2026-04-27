@@ -40,6 +40,7 @@ require("voom").setup({
   auto_close    = false,      -- auto-close tree when body leaves its window
   unified_horizontal_splits = true, -- :sp from either pane spans both panes
   unified_vertical_splits   = true, -- :vs lands at the body-side edge, never displacing the tree
+  lock_tree_splits          = true, -- :sp/:vs from the tree pane are silently dropped (no dup-tree)
   cursor_follow = true,       -- scroll body to heading when tree cursor moves
   fold_indicators = {
     enabled = true,
@@ -73,6 +74,7 @@ works without any explicit configuration.
 | `auto_close` | `boolean \| string[]` | `false` | Automatically close the voom pair when *either* pane leaves its window. Body leaving closes the tree; tree leaving closes the tree and the body's window, so `:q` / fzf / `-` to netrw from either side tears down the whole pair. Same shape as `auto_open`; mode filter is always matched against the body's mode. |
 | `unified_horizontal_splits` | `boolean` | `true` | When you run `:split` (or any horizontal split variant) inside the tree or body pane, lift the new window to a full-width sibling above or below the entire tree+body row instead of letting it split only one pane. The direction (top vs bottom) follows whether the split landed above or below the source pane, so `:abo split` and `:bel split` (and `splitbelow`) all behave as expected. |
 | `unified_vertical_splits` | `boolean` | `true` | When you run `:vsplit` (or any vertical split variant) inside the tree or body pane, push the new window to the side of the tabpage *opposite* the tree (the body-side edge), full height — keeping the tree pinned to its configured `tree_position`. Asymmetric with `unified_horizontal_splits`: this flag *overrides* the user's `:abo vsp` / `:bel vsp` direction intent, because honoring it would either land the new window between tree and body (the broken state we're preventing) or displace the tree from its sidebar position. |
+| `lock_tree_splits` | `boolean` | `true` | Silently drop any `:split` / `:vsplit` (and friends — `:new`, `<C-w>s`, `<C-w>v`, …) initiated from the tree pane. Every tree-pane split inherits the tree buffer, producing two read-only display windows over the same buffer with diverging window-local fold state and a single shared cursor — a class of bugs without a compensating use case. The new window is closed immediately after `WinNew`; net effect is that the keystroke becomes a no-op and focus stays in the tree. Body-pane splits are unaffected; they still flow through `unified_horizontal_splits` / `unified_vertical_splits`. |
 | `cursor_follow` | `boolean` | `true` | Whether moving the cursor in the tree automatically scrolls the body to the corresponding heading. |
 | `fold_indicators.enabled` | `boolean` | `true` | Show virtual-text fold-state icons (`▼`/`▶`/`·`) next to each tree node. |
 | `fold_indicators.icons` | `table` | `{ open="▼", closed="▶", leaf="·" }` | Characters used for fold indicators. |
