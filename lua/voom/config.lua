@@ -39,12 +39,36 @@ M.defaults = {
   --
   -- Implemented by intercepting `WinNew` and running `wincmd K` /
   -- `wincmd J` on the new window when its parent in `winlayout` is a
-  -- horizontal-split node containing the tree or body pane.  Vertical
-  -- splits (`:vsplit`) are untouched.
+  -- horizontal-split node containing the tree or body pane.
   --
   -- false → leave splits as Neovim's default (broken layout)
   -- true  → fix up horizontal splits to span both panes
   unified_horizontal_splits = true,
+  -- The vsplit counterpart of `unified_horizontal_splits`.  When the
+  -- user creates a vertical split (`:vsplit`, `:vs`, `<C-w>v`, …) from
+  -- either pane of an active voom session, push the new window to the
+  -- side of the tabpage *opposite* the tree (the body-side edge), full
+  -- height — keeping the tree pinned to its configured `tree_position`.
+  --
+  -- Asymmetric with `unified_horizontal_splits` on purpose: that flag
+  -- honors the user's `:abo split` / `:bel split` direction intent,
+  -- because both ends of the tabpage are equally valid for a new
+  -- full-width window.  For vsplits, honoring `:abo vsp` / `:bel vsp`
+  -- direction would either (a) land the new window between tree and
+  -- body — the broken state we're trying to prevent — or (b) push it
+  -- past the tree to the *tree-side* edge, displacing the sidebar from
+  -- its configured side.  Both options break sidebar-pinning, so we
+  -- always push to the body-side edge regardless of `:abo` / `:bel`
+  -- modifiers.
+  --
+  -- Implemented by intercepting `WinNew` and running `wincmd L` (when
+  -- `tree_position = "left"`) or `wincmd H` (when `tree_position =
+  -- "right"`) on the new window, gated on its parent in `winlayout`
+  -- being a vertical-split node containing the tree or body pane.
+  --
+  -- false → leave vsplits as Neovim's default (broken layout)
+  -- true  → push new vsplits to the body-side edge of the tabpage
+  unified_vertical_splits = true,
   -- Whether moving the cursor in the tree automatically scrolls the body
   -- window to the corresponding heading without moving focus.
   cursor_follow = true,

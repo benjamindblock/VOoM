@@ -40,15 +40,16 @@ vim.api.nvim_create_user_command("VoomSort", function(opts)
 end, { nargs = "?" })
 
 -- ==============================================================================
--- Auto-open / auto-close / unified horizontal splits
+-- Auto-open / auto-close / unified splits
 -- ==============================================================================
 --
--- All three callbacks are cheap when their flag is off — a single config
+-- All callbacks are cheap when their flag is off — a single config
 -- table lookup and early return.  They're gated on the `auto_open`,
--- `auto_close`, and `unified_horizontal_splits` config fields
--- respectively; the first two default to false, the third to true (it
--- corrects an otherwise-broken layout that users almost never want).
--- Users who never opt in to the first two pay no runtime cost beyond
+-- `auto_close`, `unified_horizontal_splits`, and
+-- `unified_vertical_splits` config fields respectively; the auto_*
+-- flags default to false, the unified_* flags to true (they correct
+-- otherwise-broken layouts that users almost never want).  Users who
+-- never opt in to the auto_* flags pay no runtime cost beyond
 -- registration.
 
 local voom_augroup = vim.api.nvim_create_augroup("voom_auto", { clear = true })
@@ -197,34 +198,43 @@ vim.api.nvim_create_autocmd("BufWinLeave", {
 })
 
 -- ==============================================================================
--- Unified horizontal splits
+-- Unified splits (horizontal and vertical)
 -- ==============================================================================
 --
--- Default `:split` inside an active voom session produces a layout that
--- almost no user actually wants:
+-- Default `:split` and `:vsplit` inside an active voom session both
+-- produce layouts that almost no user actually wants:
 --
---   before:  {row, [{leaf, tree}, {leaf, body}]}
---   :sp in body →
---            {row, [{leaf, tree}, {col, [{leaf, new}, {leaf, body}]}]}
+--   before:        {row, [{leaf, tree}, {leaf, body}]}
+--   :sp in body →  {row, [{leaf, tree}, {col, [{leaf, new}, {leaf, body}]}]}
+--   :vs in tree →  {row, [{leaf, tree}, {leaf, dup_tree}, {leaf, body}]}
 --
--- The tree-side and body-side rows are now out of sync: body is half
--- height while tree keeps its full height, and `:sp` issued from the
--- *tree* side leaves the user staring at two duplicate tree windows.
+-- For horizontal splits the tree-side and body-side rows go out of
+-- sync; for vertical splits the new window lands between the tree
+-- and body, displacing the sidebar pinning.
 --
 -- We intercept `WinNew`, locate the new window's parent in
--- `vim.fn.winlayout()`, and — if that parent is a `"col"` (horizontal
--- split) sharing a sibling with the tree or body pane — run
--- `wincmd K` / `wincmd J` to lift the new window to a full-width
--- sibling above or below the entire tree+body row.  The choice
--- between K and J honors where the user's split actually landed:
--- `:split` (with default `splitbelow=false`) and `:abo split` go to
--- the top, `:bel split` (or `:split` with `splitbelow=true`) goes to
--- the bottom.
+-- `vim.fn.winlayout()`, and dispatch on its kind:
 --
--- Vertical splits (`{"row"}` parent) are out of scope and left
--- untouched — voom's own tree-pane creation is a vertical split, so
--- this guard also keeps us from disturbing the plugin's own setup
--- when WinNew fires inside `tree.create()`.
+--   * Parent is `"col"` (horizontal split): run `wincmd K` / `wincmd J`
+--     to lift the new window to a full-width sibling above or below
+--     the entire tree+body row.  Direction *honors* the user's
+--     `:abo split` / `:bel split` intent, since both ends of the
+--     tabpage are equally valid for a new full-width window.
+--
+--   * Parent is `"row"` (vertical split): run `wincmd L` / `wincmd H`
+--     to push the new window to the body-side edge of the tabpage,
+--     full height.  Direction is determined by `tree_position`
+--     (left ⇒ push right, right ⇒ push left) and *overrides* the
+--     user's `:abo vsp` / `:bel vsp` intent — honoring it would
+--     either land the new window between tree and body (the broken
+--     state we're preventing) or displace the tree from its sidebar
+--     position.
+--
+-- Each branch only fires when at least one sibling under the parent
+-- node is the tree or body window, narrowing the fix-up to splits
+-- that actually broke the canonical voom row.  Voom's own tree-pane
+-- creation (a vsplit) is protected by the `find_voom_pair_in_tab`
+-- exclude-win logic and the `new == tree_win or body_win` guard.
 
 -- Walk a winlayout tree and return (parent_kind, siblings) for the
 -- node `target_win` if found.  `parent_kind` is the layout type of
@@ -295,7 +305,10 @@ vim.api.nvim_create_autocmd("WinNew", {
   group = voom_augroup,
   callback = function()
     local config = require("voom.config")
-    if not config.options.unified_horizontal_splits then
+    -- Don't bail on either flag yet — we don't know the split's axis
+    -- until we resolve `parent_kind` below.  Each branch gates on its
+    -- own flag.  If both are off there's no work to do, so short-circuit.
+    if not (config.options.unified_horizontal_splits or config.options.unified_vertical_splits) then
       return
     end
 
@@ -341,8 +354,10 @@ vim.api.nvim_create_autocmd("WinNew", {
       local parent_kind, siblings = find_layout_parent(layout, new_win)
 
       -- "col" = children stacked vertically = horizontal split.
-      -- "row" = children side-by-side = vertical split (not our problem).
-      if parent_kind ~= "col" then
+      -- "row" = children side-by-side = vertical split.
+      -- Anything else (e.g. nil for a root window) means there's no
+      -- parent split to reshape.
+      if parent_kind ~= "col" and parent_kind ~= "row" then
         return
       end
 
@@ -362,16 +377,32 @@ vim.api.nvim_create_autocmd("WinNew", {
         return
       end
 
-      -- Honor the split's vertical orientation: if the new window
-      -- landed *above* the source pane (default `:split` without
-      -- `splitbelow`, or `:abo split`), promote it to a full-width
-      -- top sibling; otherwise to a full-width bottom sibling.  Read
-      -- positions inside the call rather than caching them outside,
-      -- because the layout may have shifted while we were waiting on
-      -- `vim.schedule`.
-      local new_pos = vim.api.nvim_win_get_position(new_win)
-      local source_pos = vim.api.nvim_win_get_position(source_pane_win)
-      local cmd = (new_pos[1] < source_pos[1]) and "wincmd K" or "wincmd J"
+      -- Resolve the wincmd to run.  Read positions inside this scope
+      -- rather than caching them outside, because the layout may have
+      -- shifted while we were waiting on `vim.schedule`.
+      local cmd
+      if parent_kind == "col" then
+        if not config.options.unified_horizontal_splits then
+          return
+        end
+        -- Horizontal split: honor the user's vertical-direction
+        -- intent.  If the new window landed *above* the source pane
+        -- (default `:split` without `splitbelow`, or `:abo split`),
+        -- promote it to a full-width top sibling; otherwise to a
+        -- full-width bottom sibling.
+        local new_pos = vim.api.nvim_win_get_position(new_win)
+        local source_pos = vim.api.nvim_win_get_position(source_pane_win)
+        cmd = (new_pos[1] < source_pos[1]) and "wincmd K" or "wincmd J"
+      else
+        if not config.options.unified_vertical_splits then
+          return
+        end
+        -- Vertical split: ignore the user's horizontal-direction
+        -- intent and push the new window to the body-side edge of the
+        -- tabpage (the side opposite the tree).  See the section
+        -- comment above for why we override `:abo vsp` / `:bel vsp`.
+        cmd = (config.options.tree_position == "right") and "wincmd H" or "wincmd L"
+      end
 
       pcall(function()
         vim.api.nvim_win_call(new_win, function()

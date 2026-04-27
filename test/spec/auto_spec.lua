@@ -496,7 +496,12 @@ T["unified_horizontal_splits"]["abo split from body lifts new window to full-wid
   MiniTest.expect.equality(layout[2][2][1], "row")
 end
 
-T["unified_horizontal_splits"]["vsplit from body is left untouched"] = function()
+T["unified_horizontal_splits"]["vsplit does not trigger col-promotion"] = function()
+  -- The horizontal flag must only fire on `"col"` parents.  A vsplit
+  -- creates a `"row"` parent, which the vertical flag handles instead.
+  -- Verify here that the horizontal branch leaves the top-level layout
+  -- as a row (the vertical branch may still reshape *within* that row,
+  -- which is `unified_vertical_splits`'s job to test).
   require("voom").setup({})
 
   open_session("body")
@@ -505,7 +510,6 @@ T["unified_horizontal_splits"]["vsplit from body is left untouched"] = function(
     vim.cmd("vsplit")
   end)
 
-  -- Vertical splits remain a single top-level row; no col promotion.
   local layout = vim.fn.winlayout()
   MiniTest.expect.equality(layout[1], "row")
 end
@@ -542,6 +546,174 @@ T["unified_horizontal_splits"]["voom's own tree split is not disturbed"] = funct
   local layout = vim.fn.winlayout()
   MiniTest.expect.equality(layout[1], "row")
   local leaves = row_leaves(layout)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, tree_win), true)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, body_win), true)
+end
+
+-- ==============================================================================
+-- unified_vertical_splits autocommand
+-- ==============================================================================
+
+T["unified_vertical_splits"] = MiniTest.new_set({ hooks = { post_case = reset_state } })
+
+--- Resolve the new (third) window from a post-vsplit layout.  The
+--- handler may have moved it; we identify it as the lone leaf that's
+--- not the tree or body window.
+local function third_leaf(layout, tree_win, body_win)
+  if layout[1] ~= "row" then
+    return nil, "top is not row"
+  end
+  for _, child in ipairs(layout[2]) do
+    if child[1] == "leaf" and child[2] ~= tree_win and child[2] ~= body_win then
+      return child[2]
+    end
+  end
+  return nil, "no third leaf"
+end
+
+T["unified_vertical_splits"]["vs from tree pushes new window to far right"] = function()
+  require("voom").setup({}) -- defaults: tree_position="left", flag=true
+
+  local _, _, tree_win, body_win = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  local layout = vim.fn.winlayout()
+  MiniTest.expect.equality(layout[1], "row")
+
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  -- Order must be [tree, body, new].
+  MiniTest.expect.equality(leaves[1], tree_win)
+  MiniTest.expect.equality(leaves[2], body_win)
+  MiniTest.expect.equality(leaves[3] ~= tree_win and leaves[3] ~= body_win, true)
+end
+
+T["unified_vertical_splits"]["vs from body pushes new window to far right"] = function()
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  MiniTest.expect.equality(leaves[1], tree_win)
+  MiniTest.expect.equality(leaves[2], body_win)
+end
+
+T["unified_vertical_splits"]["splitright=false from body still pushes far right"] = function()
+  -- Without splitright, default `:vsplit` from body would land *between*
+  -- tree and body — the broken state.  Confirm the handler still pushes
+  -- to far right regardless of splitright direction.
+  require("voom").setup({})
+
+  local prev = vim.opt.splitright:get()
+  vim.opt.splitright = false
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  MiniTest.expect.equality(leaves[1], tree_win)
+  MiniTest.expect.equality(leaves[2], body_win)
+
+  vim.opt.splitright = prev
+end
+
+T["unified_vertical_splits"]["abo vsplit from body has its left intent overridden"] = function()
+  -- Documented asymmetry with horizontal splits: `:abo vsp` would land
+  -- the new window between tree and body (or past the tree, displacing
+  -- the sidebar).  We override that intent and push to the body-side
+  -- edge anyway.
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("aboveleft vsplit")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  MiniTest.expect.equality(leaves[1], tree_win)
+  MiniTest.expect.equality(leaves[2], body_win)
+  -- The new window must NOT be on the tree-side edge (would displace
+  -- the sidebar).
+  MiniTest.expect.equality(leaves[1] ~= leaves[3], true)
+end
+
+T["unified_vertical_splits"]["tree_position=right pushes new window to far left"] = function()
+  require("voom").setup({ tree_position = "right" })
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  -- With tree on right, the body-side edge is the LEFT edge.  Order
+  -- becomes [new, body, tree].
+  MiniTest.expect.equality(leaves[3], tree_win)
+  MiniTest.expect.equality(leaves[2], body_win)
+  MiniTest.expect.equality(leaves[1] ~= tree_win and leaves[1] ~= body_win, true)
+end
+
+T["unified_vertical_splits"]["flag=false leaves the broken vsplit layout in place"] = function()
+  require("voom").setup({ unified_vertical_splits = false })
+
+  local _, _, tree_win, body_win = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  -- With the flag off, Neovim's default `:vs` from the tree pane
+  -- (with the default `splitright = false`) lands the new window to
+  -- the *left* of the tree — `[new, tree, body]`.  Our fix-up would
+  -- have moved it to the body-side edge (rightmost); confirm it's
+  -- still in the broken position (anywhere but the rightmost slot).
+  local layout = vim.fn.winlayout()
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 3)
+  local new_win
+  for _, w in ipairs(leaves) do
+    if w ~= tree_win and w ~= body_win then
+      new_win = w
+      break
+    end
+  end
+  MiniTest.expect.equality(new_win ~= nil, true)
+  MiniTest.expect.equality(leaves[#leaves] ~= new_win, true)
+end
+
+T["unified_vertical_splits"]["voom's own tree split is not disturbed"] = function()
+  -- Same guard as the horizontal version: tree.create() issues a vsplit
+  -- and WinNew fires inside it.  The exclude-win + pair-membership guard
+  -- keeps the handler from acting on the tree pane itself.
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("body")
+  with_sync_schedule(function() end)
+
+  local layout = vim.fn.winlayout()
+  MiniTest.expect.equality(layout[1], "row")
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(#leaves, 2)
   MiniTest.expect.equality(vim.tbl_contains(leaves, tree_win), true)
   MiniTest.expect.equality(vim.tbl_contains(leaves, body_win), true)
 end
