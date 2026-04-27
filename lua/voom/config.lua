@@ -27,6 +27,24 @@ M.defaults = {
   -- true   → auto-close for all supported modes
   -- table  → auto-close only for the listed mode names, e.g. {"markdown"}
   auto_close = false,
+  -- When the user creates a horizontal split (`:split`, `:sp`, `<C-w>s`,
+  -- `:new`, …) inside either pane of an active voom session, reshape the
+  -- resulting layout so the new window spans the full width *beneath*
+  -- (or above, for `:abo split`) the entire tree+body row, instead of
+  -- splitting only the pane the user was focused in.  Without this,
+  -- `:sp` leaves the tree-side and body-side columns out of sync —
+  -- e.g. `:sp` from the tree pane creates a duplicate tree window above
+  -- the original tree while leaving the body un-split, which is rarely
+  -- what a two-pane outliner user wants.
+  --
+  -- Implemented by intercepting `WinNew` and running `wincmd K` /
+  -- `wincmd J` on the new window when its parent in `winlayout` is a
+  -- horizontal-split node containing the tree or body pane.  Vertical
+  -- splits (`:vsplit`) are untouched.
+  --
+  -- false → leave splits as Neovim's default (broken layout)
+  -- true  → fix up horizontal splits to span both panes
+  unified_horizontal_splits = true,
   -- Whether moving the cursor in the tree automatically scrolls the body
   -- window to the corresponding heading without moving focus.
   cursor_follow = true,
@@ -35,7 +53,7 @@ M.defaults = {
   -- Icons are rendered via nvim_buf_set_extmark (Neovim-only).
   fold_indicators = {
     enabled = true,
-    icons   = { open = "▼", closed = "▶", leaf = "·" },
+    icons = { open = "▼", closed = "▶", leaf = "·" },
   },
   -- Vertical guide lines rendered at each ancestor column of nested headings.
   -- Set enabled=false to turn them off entirely.
@@ -43,7 +61,7 @@ M.defaults = {
   -- display-column character can be used.
   indent_guides = {
     enabled = true,
-    char    = "│",   -- U+2502 box-drawing vertical bar
+    char = "│", -- U+2502 box-drawing vertical bar
   },
   -- End-of-line "+N" descendant-count badges shown on collapsed nodes.
   badges = {

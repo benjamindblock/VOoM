@@ -38,6 +38,7 @@ require("voom").setup({
   default_mode  = "markdown", -- markup mode used when none can be auto-detected
   auto_open     = false,      -- auto-open tree for matching filetypes (see below)
   auto_close    = false,      -- auto-close tree when body leaves its window
+  unified_horizontal_splits = true, -- :sp from either pane spans both panes
   cursor_follow = true,       -- scroll body to heading when tree cursor moves
   fold_indicators = {
     enabled = true,
@@ -69,6 +70,7 @@ works without any explicit configuration.
 | `default_mode` | `string` | `"markdown"` | Markup mode used when none can be auto-detected from `filetype`. |
 | `auto_open` | `boolean \| string[]` | `false` | Automatically open the tree pane on `FileType`. `true` enables it for every registered mode; a table (e.g. `{ "markdown" }`) restricts it to the listed modes. |
 | `auto_close` | `boolean \| string[]` | `false` | Automatically close the voom pair when *either* pane leaves its window. Body leaving closes the tree; tree leaving closes the tree and the body's window, so `:q` / fzf / `-` to netrw from either side tears down the whole pair. Same shape as `auto_open`; mode filter is always matched against the body's mode. |
+| `unified_horizontal_splits` | `boolean` | `true` | When you run `:split` (or any horizontal split variant) inside the tree or body pane, lift the new window to a full-width sibling above or below the entire tree+body row instead of letting it split only one pane. The direction (top vs bottom) follows whether the split landed above or below the source pane, so `:abo split` and `:bel split` (and `splitbelow`) all behave as expected. Vertical splits (`:vsplit`) are untouched. |
 | `cursor_follow` | `boolean` | `true` | Whether moving the cursor in the tree automatically scrolls the body to the corresponding heading. |
 | `fold_indicators.enabled` | `boolean` | `true` | Show virtual-text fold-state icons (`▼`/`▶`/`·`) next to each tree node. |
 | `fold_indicators.icons` | `table` | `{ open="▼", closed="▶", leaf="·" }` | Characters used for fold indicators. |

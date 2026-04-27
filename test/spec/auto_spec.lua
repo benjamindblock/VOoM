@@ -28,11 +28,17 @@ local function with_sync_schedule(fn)
   -- behaviour without the MiniTest-vs-vim.wait deadlock.
   local orig = vim.schedule
   local queue = {}
-  vim.schedule = function(f) table.insert(queue, f) end
+  vim.schedule = function(f)
+    table.insert(queue, f)
+  end
   local ok, err = pcall(fn)
   vim.schedule = orig
-  for _, f in ipairs(queue) do f() end
-  if not ok then error(err) end
+  for _, f in ipairs(queue) do
+    f()
+  end
+  if not ok then
+    error(err)
+  end
 end
 
 --- Set `body_buf`'s filetype, then display it in the current window.
@@ -207,7 +213,7 @@ T["auto_open"]["re-opens tree when body returns to its window"] = function()
   -- buffer) did not fire FileType and the tree stayed closed.  Moving auto_open
   -- to BufWinEnter makes the tree reopen on every display, which is the
   -- behaviour users expect from a pane that mirrors the active buffer.
-  local voom  = require("voom")
+  local voom = require("voom")
   local state = require("voom.state")
 
   voom.setup({ auto_open = true, auto_close = true })
@@ -362,6 +368,182 @@ T["auto_close"]["table form filter applies to tree direction"] = function()
   MiniTest.expect.equality(vim.api.nvim_buf_is_valid(py_tree), true)
   MiniTest.expect.equality(H.find_win_for_buf(py_body) ~= nil, true)
   -- post_case → cleanup_registered_bodies closes the python tree.
+end
+
+-- ==============================================================================
+-- unified_horizontal_splits autocommand
+-- ==============================================================================
+
+T["unified_horizontal_splits"] = MiniTest.new_set({ hooks = { post_case = reset_state } })
+
+--- Open a fresh voom session, focus a specific pane, and return the
+--- pieces tests need: body buffer, tree buffer, tree window, body
+--- window.  `focus_pane` is "body" or "tree".
+local function open_session(focus_pane)
+  local tree = require("voom.tree")
+  local body = make_body_from_fixture("sample.md")
+  vim.api.nvim_set_current_buf(body)
+  vim.bo[body].filetype = "markdown"
+  local tree_buf = tree.create(body, "markdown")
+  local tree_win = H.find_win_for_buf(tree_buf)
+  local body_win = H.find_win_for_buf(body)
+  if focus_pane == "tree" then
+    vim.api.nvim_set_current_win(tree_win)
+  else
+    vim.api.nvim_set_current_win(body_win)
+  end
+  return body, tree_buf, tree_win, body_win
+end
+
+--- Find the "row" child of a top-level "col" layout (or vice-versa) and
+--- return the list of leaf window IDs it contains.  Used to assert that
+--- the tree+body row stays intact after a fix-up.
+local function row_leaves(layout)
+  if layout[1] ~= "row" then
+    return nil
+  end
+  local leaves = {}
+  for _, child in ipairs(layout[2]) do
+    if child[1] == "leaf" then
+      table.insert(leaves, child[2])
+    end
+  end
+  return leaves
+end
+
+--- Return true if the given top-level layout matches the post-fixup
+--- shape: a "col" whose children are exactly { "row" with [tree, body],
+--- "leaf" } in either order (top or bottom placement of the new leaf).
+local function is_unified_layout(layout, tree_win, body_win)
+  if layout[1] ~= "col" then
+    return false, "top is not col"
+  end
+  if #layout[2] ~= 2 then
+    return false, "col does not have 2 children"
+  end
+
+  local row_node, leaf_node
+  for _, child in ipairs(layout[2]) do
+    if child[1] == "row" then
+      row_node = child
+    end
+    if child[1] == "leaf" then
+      leaf_node = child
+    end
+  end
+  if not (row_node and leaf_node) then
+    return false, "col children are not row+leaf"
+  end
+
+  local leaves = row_leaves(row_node)
+  if not (vim.tbl_contains(leaves, tree_win) and vim.tbl_contains(leaves, body_win)) then
+    return false, "row does not contain both panes"
+  end
+  return true
+end
+
+T["unified_horizontal_splits"]["bel split from body lifts new window to full-width bottom"] = function()
+  require("voom").setup({}) -- default unified_horizontal_splits = true
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("belowright split")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local ok, msg = is_unified_layout(layout, tree_win, body_win)
+  MiniTest.expect.equality(ok, true, msg)
+
+  -- :bel placed the new window below body, so the fix-up should land it
+  -- as the bottom child of the top-level col.
+  MiniTest.expect.equality(layout[2][1][1], "row")
+  MiniTest.expect.equality(layout[2][2][1], "leaf")
+end
+
+T["unified_horizontal_splits"]["bel split from tree lifts new window to full-width bottom"] = function()
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("belowright split")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local ok, msg = is_unified_layout(layout, tree_win, body_win)
+  MiniTest.expect.equality(ok, true, msg)
+  MiniTest.expect.equality(layout[2][1][1], "row")
+  MiniTest.expect.equality(layout[2][2][1], "leaf")
+end
+
+T["unified_horizontal_splits"]["abo split from body lifts new window to full-width top"] = function()
+  require("voom").setup({})
+
+  local _, _, tree_win, body_win = open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("aboveleft split")
+  end)
+
+  local layout = vim.fn.winlayout()
+  local ok, msg = is_unified_layout(layout, tree_win, body_win)
+  MiniTest.expect.equality(ok, true, msg)
+
+  -- :abo placed the new window above body, so the fix-up should land it
+  -- as the top child of the top-level col.
+  MiniTest.expect.equality(layout[2][1][1], "leaf")
+  MiniTest.expect.equality(layout[2][2][1], "row")
+end
+
+T["unified_horizontal_splits"]["vsplit from body is left untouched"] = function()
+  require("voom").setup({})
+
+  open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  -- Vertical splits remain a single top-level row; no col promotion.
+  local layout = vim.fn.winlayout()
+  MiniTest.expect.equality(layout[1], "row")
+end
+
+T["unified_horizontal_splits"]["flag=false leaves the broken split layout in place"] = function()
+  require("voom").setup({ unified_horizontal_splits = false })
+
+  open_session("body")
+
+  with_sync_schedule(function()
+    vim.cmd("belowright split")
+  end)
+
+  -- With the flag off, Neovim's default is preserved: the top level is
+  -- still a "row" (tree + nested col on the body side), not a unified
+  -- "col".
+  local layout = vim.fn.winlayout()
+  MiniTest.expect.equality(layout[1], "row")
+end
+
+T["unified_horizontal_splits"]["voom's own tree split is not disturbed"] = function()
+  require("voom").setup({})
+
+  -- tree.create issues a vertical split for the tree pane.  WinNew fires
+  -- inside that call.  The handler must not move the tree pane to a
+  -- full-width row of its own (parent is "row", not "col") — assert by
+  -- checking the resulting baseline layout is still a single row of
+  -- [tree, body] with no extra col wrapping.
+  local _, _, tree_win, body_win = open_session("body")
+
+  -- Drain any deferred work the session setup may have queued.
+  with_sync_schedule(function() end)
+
+  local layout = vim.fn.winlayout()
+  MiniTest.expect.equality(layout[1], "row")
+  local leaves = row_leaves(layout)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, tree_win), true)
+  MiniTest.expect.equality(vim.tbl_contains(leaves, body_win), true)
 end
 
 return T
