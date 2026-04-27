@@ -2,7 +2,6 @@
 lua = "latest"
 stylua = "latest"
 lua-language-server = "latest"
-tree-sitter = "latest"
 
 [tasks.fmt]
 description = "Format all Lua files with StyLua"
