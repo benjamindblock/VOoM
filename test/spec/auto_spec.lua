@@ -718,4 +718,42 @@ T["unified_vertical_splits"]["voom's own tree split is not disturbed"] = functio
   MiniTest.expect.equality(vim.tbl_contains(leaves, body_win), true)
 end
 
+T["unified_vertical_splits"]["follow_cursor keeps focus in duplicate tree window"] = function()
+  -- Regression: when `:vs` from the tree pane creates a second window
+  -- showing the tree buffer, `follow_cursor`'s "restore focus" branch
+  -- would call `nvim_set_current_win(find_win_for_buf(tree_buf))` —
+  -- which returns the first tree window in layout order, not the one
+  -- the user is currently in.  Every cursor move in the duplicate tree
+  -- bounced focus back to the original.  Confirm the duplicate keeps
+  -- focus across an explicit follow_cursor call.
+  require("voom").setup({})
+
+  local _, tree_buf, tree_win_orig, _ = open_session("tree")
+
+  with_sync_schedule(function()
+    vim.cmd("vsplit")
+  end)
+
+  -- Identify the duplicate tree window (the one that's not tree_win_orig).
+  local tree_dup
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(w) == tree_buf and w ~= tree_win_orig then
+      tree_dup = w
+      break
+    end
+  end
+  MiniTest.expect.equality(tree_dup ~= nil, true)
+
+  vim.api.nvim_set_current_win(tree_dup)
+  require("voom.tree").follow_cursor(tree_buf, 1)
+
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), tree_dup)
+
+  -- Close the duplicate explicitly so post_case → cleanup_registered_bodies
+  -- doesn't trip over a window whose buffer it's about to wipe.
+  if vim.api.nvim_win_is_valid(tree_dup) then
+    vim.api.nvim_win_close(tree_dup, true)
+  end
+end
+
 return T

@@ -516,8 +516,18 @@ function M.follow_cursor(tree_buf, tree_lnum)
   if body_win then
     vim.api.nvim_win_set_cursor(body_win, { body_lnum, 0 })
   end
-  -- Restore focus to the tree window in case the API call moved it.
-  if tree_win and vim.api.nvim_get_current_win() ~= tree_win then
+  -- Restore focus to a tree window in case the API call moved it.  Only
+  -- bounce when the *current* window isn't already showing the tree
+  -- buffer: after `:vs` from the tree pane, the user can have multiple
+  -- tree windows and `find_win_for_buf` only returns the first one in
+  -- layout order.  Without this guard, every cursor move in the
+  -- duplicate tree window would yank focus back to the original — a
+  -- regression introduced once `unified_vertical_splits` made the
+  -- duplicate-tree case routinely reachable.
+  local cur_win = vim.api.nvim_get_current_win()
+  if tree_win
+    and cur_win ~= tree_win
+    and vim.api.nvim_win_get_buf(cur_win) ~= tree_buf then
     vim.api.nvim_set_current_win(tree_win)
   end
 end
